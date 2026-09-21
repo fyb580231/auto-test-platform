@@ -1,0 +1,47 @@
+# ==============================================================================
+# auto-test-platform 后端依赖
+# Python 3.11+ / 3.12 均可
+# ==============================================================================
+
+# ---------- Web 框架 ----------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ---------- ORM / 数据校验 ----------
+SQLAlchemy==2.0.36
+pydantic==2.10.4
+pydantic-settings==2.7.0
+PyMySQL==1.1.1              # 预留 MySQL 切换（默认仍走 SQLite）
+
+# ---------- 认证 ----------
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+
+# ---------- 测试引擎层 ----------
+pytest==8.3.4
+pytest-asyncio==0.25.0
+pytest-rerunfailures==14.0  # 失败重跑
+allure-pytest==2.13.5
+httpx==0.28.1
+jsonschema==4.23.0
+PyYAML==6.0.2
+Faker==33.1.0
+
+# ---------- UI 自动化 ----------
+playwright==1.49.1
+
+# ---------- 性能测试（可选模块） ----------
+locust==2.32.5
+
+# ---------- 调度 / 日志 ----------
+APScheduler==3.11.0
+loguru==0.7.3
+
+# ---------- AI 能力（DeepSeek 兼容 OpenAI SDK） ----------
+openai==1.59.6
+
+# ---------- 代码质量（开发期） ----------
+ruff==0.8.4
+black==24.10.0
+pre-commit==4.0.1

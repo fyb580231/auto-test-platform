@@ -1,0 +1,61 @@
+[project]
+name = "auto-test-platform"
+version = "1.0.0"
+description = "接口测试 + UI 测试 + AI 辅助一体化的 Web 测试管理平台"
+requires-python = ">=3.11"
+readme = "README.md"
+
+# ------------------------------------------------------------------------------
+# 代码风格：ruff + black
+# ------------------------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+extend-exclude = '''
+/(
+    \.venv
+  | \.toolchain
+  | web/node_modules
+  | reports
+  | testcases/generated
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", ".toolchain", "web", "reports", "testcases/generated"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "BLE", # flake8-blind-except
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # 行长由 black 统一处理
+    "B008",  # FastAPI 的 Depends() 默认参数写法
+    "RUF001", "RUF002", "RUF003",  # 允许中文全角标点出现在注释/docstring
+]
+
+[tool.ruff.lint.per-file-ignores]
+"testcases/*" = ["E402"]
+"engine/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "engine"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["testcases"]
+python_files = ["test_*.py"]
+addopts = "-ra -q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
