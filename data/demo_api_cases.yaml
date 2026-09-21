@@ -1,0 +1,293 @@
+# ==============================================================================
+# 内置演示接口用例（指向 httpbin.org，公开可用、无需任何内部系统）
+#
+# 这个文件既被平台「首次启动时的数据初始化」读取，也可以被命令行直接执行：
+#     python run_engine.py --file data/demo_api_cases.yaml --tags smoke
+# 一条用例两种用法，是引擎层「可脱离 Web 独立运行」的直接体现。
+#
+# 关于响应时间阈值：httpbin.org 是境外公有服务，跨网络访问耗时波动较大，
+# 因此演示用例统一把响应时间断言放宽到 10s，只用来演示「响应时间断言」这个能力，
+# 不作为真实的性能基线。接入你自己的内网服务时，按 SLA 收紧到 500ms 级别即可。
+#
+# 字段说明见 README 的「如何新增一个自定义用例」章节。
+# ==============================================================================
+
+variables:
+  base_url: https://httpbin.org
+  test_username: test_user_001
+  test_password: "Test@123456"
+
+cases:
+  # ---------------------------------------------------------------------------
+  # 1. 基础连通性：GET + Query 参数回显
+  # ---------------------------------------------------------------------------
+  - id: api_001
+    name: "GET /get - 连通性与 Query 参数回显"
+    case_type: api
+    description: "最基础的连通性检查：请求带 Query 参数，httpbin 会把参数原样回显在 args 字段里。"
+    tags: ["smoke", "critical"]
+    method: GET
+    url: /get
+    params:
+      source: auto_test_platform
+      page: 1
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.args.source"
+        op: eq
+        expected: auto_test_platform
+        message: "Query 参数 source 未被服务端正确接收"
+      - type: json_field
+        field: "$.args.page"
+        op: eq
+        expected: "1"
+        name: "Query 参数 page 回显"
+      - type: json_field
+        field: "$.url"
+        op: not_empty
+        name: "响应包含请求地址"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 2. 返回值唯一性
+  # ---------------------------------------------------------------------------
+  - id: api_002
+    name: "GET /uuid - 返回非空 UUID"
+    case_type: api
+    description: "验证接口返回唯一标识，并校验格式符合 UUID 标准结构。"
+    tags: ["smoke"]
+    method: GET
+    url: /uuid
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.uuid"
+        op: regex
+        expected: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        message: "返回的 uuid 不符合标准 UUID 格式"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 3. POST JSON 回显（正向）
+  # ---------------------------------------------------------------------------
+  - id: api_003
+    name: "POST /post - JSON 请求体正确回显"
+    case_type: api
+    description: "验证 POST JSON 请求体被服务端完整解析并回显，同时校验自定义请求头透传。"
+    tags: ["smoke", "critical"]
+    method: POST
+    url: /post
+    headers:
+      Content-Type: application/json
+      X-Test-Source: auto-test-platform
+    body:
+      username: "{{test_username}}"
+      password: "{{test_password}}"
+      remember: true
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.json.username"
+        op: eq
+        expected: "{{test_username}}"
+        message: "请求体 username 回显不一致，怀疑请求体未被正确序列化"
+      - type: json_field
+        field: "$.json.remember"
+        op: eq
+        expected: true
+        name: "布尔字段类型未被篡改"
+      - type: json_field
+        field: "$.headers.X-Test-Source"
+        op: eq
+        expected: auto-test-platform
+        name: "自定义请求头被服务端接收"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 4. 前置用例：模拟「登录拿 Token」
+  # ---------------------------------------------------------------------------
+  - id: api_004
+    name: "POST /post - 模拟登录并返回凭证（前置用例）"
+    case_type: api
+    description: "作为其他用例的前置步骤：模拟登录接口，返回的凭证会被后续用例提取使用。"
+    tags: ["regression"]
+    method: POST
+    url: /post
+    headers:
+      Content-Type: application/json
+    body:
+      username: "{{test_username}}"
+      password: "{{test_password}}"
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "登录接口返回 200"
+      - type: json_field
+        field: "$.json.username"
+        op: not_empty
+        name: "返回体包含用户名"
+
+  # ---------------------------------------------------------------------------
+  # 5. 用例编排：前置用例 + 变量提取 + 变量渲染
+  # ---------------------------------------------------------------------------
+  - id: api_005
+    name: "GET /get - 携带前置用例提取的 Token 访问"
+    case_type: api
+    description: >-
+      演示「前置用例 -> 提取变量 -> 主用例通过 {{变量}} 引用」的完整链路，
+      这是接口自动化里最常用的依赖处理方式（先登录拿 Token 再访问业务接口）。
+    tags: ["regression"]
+    method: GET
+    url: /get
+    setup_ref: api_004
+    extract:
+      - name: token
+        path: "$.json.username"
+    headers:
+      Authorization: "Bearer {{token}}"
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.headers.Authorization"
+        op: eq
+        expected: "Bearer {{test_username}}"
+        message: "Token 未被正确注入请求头，检查前置用例的提取路径"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 6. 嵌套 JSON 结构断言
+  # ---------------------------------------------------------------------------
+  - id: api_006
+    name: "GET /json - 嵌套结构字段断言"
+    case_type: api
+    description: "验证对多层嵌套响应结构的取值与断言能力。"
+    tags: ["regression"]
+    method: GET
+    url: /json
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.slideshow.title"
+        op: contains
+        expected: Sample
+        name: "嵌套字段 title 包含关键字"
+      - type: json_field
+        field: "$.slideshow.slides[0].title"
+        op: not_empty
+        name: "数组下标取值正常"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 7. 异常状态码（反向用例，预期就是 404）
+  # ---------------------------------------------------------------------------
+  - id: api_007
+    name: "GET /status/404 - 反向用例断言异常状态码"
+    case_type: api
+    description: "反向用例：明确断言服务端返回 404，验证状态码断言支持非 2xx 期望值。"
+    tags: ["regression"]
+    method: GET
+    url: /status/404
+    assertions:
+      - type: status_code
+        expected: 404
+        name: "状态码精确匹配 404"
+      - type: response_time
+        expected: 10000
+        name: "错误响应同样应快速返回"
+
+  # ---------------------------------------------------------------------------
+  # 8. 响应时间断言（慢接口）
+  # ---------------------------------------------------------------------------
+  - id: api_008
+    name: "GET /delay/1 - 慢接口响应时间断言"
+    case_type: api
+    description: "验证响应时间断言：接口固定延迟 1 秒，阈值设为 10 秒。"
+    tags: ["regression"]
+    method: GET
+    url: /delay/1
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s（接口本身耗时约 1s）"
+      - type: json_field
+        field: "$.url"
+        op: contains
+        expected: delay/1
+        name: "回显地址包含 delay/1"
+
+  # ---------------------------------------------------------------------------
+  # 9. 自定义请求头透传
+  # ---------------------------------------------------------------------------
+  - id: api_009
+    name: "GET /headers - 自定义请求头透传校验"
+    case_type: api
+    description: "验证用例级请求头能被正确透传，常用于鉴权头、链路追踪头的回归。"
+    tags: ["regression"]
+    method: GET
+    url: /headers
+    headers:
+      X-Api-Version: v1
+      X-Client: auto-test-platform
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.headers.X-Api-Version"
+        op: eq
+        expected: v1
+        name: "版本头透传正确"
+      - type: response_time
+        expected: 10000
+        name: "响应时间小于 10s"
+
+  # ---------------------------------------------------------------------------
+  # 10. 【演示】故意失败的用例
+  #      存在的意义：让新同学 clone 下来就能立刻看到「失败用例高亮 / 错误堆栈 /
+  #      AI 失败分析」长什么样，而不用自己去构造一个失败。
+  # ---------------------------------------------------------------------------
+  - id: api_010
+    name: "【演示】故意失败 - 用于展示失败报告与 AI 分析"
+    case_type: api
+    description: >-
+      这条用例断言了一个 httpbin 永远不可能返回的字段，因此必然失败。
+      它不影响其他用例，仅用于演示「失败用例高亮 + 请求响应详情 + AI 失败分析」。
+      想跑出全绿结果时，从用例集里把它移除即可。
+    tags: ["regression"]
+    method: GET
+    url: /get
+    params:
+      demo: intentional_failure
+    assertions:
+      - type: status_code
+        expected: 200
+        name: "状态码 200"
+      - type: json_field
+        field: "$.business_code"
+        op: eq
+        expected: 0
+        message: "业务码字段不存在（本用例故意如此，用于演示失败分析）"
