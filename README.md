@@ -1,161 +1,173 @@
 # auto-test-platform
 
-> 接口测试 + UI 测试 + AI 辅助一体化的 Web 测试管理平台。
-> FastAPI + Vue 3 + pytest + DeepSeek，**引擎层可脱离 Web 独立运行**。
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB.svg)
+![Node](https://img.shields.io/badge/node-%E2%89%A518.18-339933.svg)
+[![CI](https://github.com/fyb580231/auto-test-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/fyb580231/auto-test-platform/actions/workflows/ci.yml)
 
-把「写用例 → 编排执行 → 看报告 → 定位失败原因」这条链路收进一个平台：
-用例是数据而不是代码，执行是独立的 pytest 子进程，失败分析交给大模型做，模型不可用时自动降级为规则兜底。
+> 一个把接口测试、UI 测试与 AI 辅助串成闭环的自动化测试管理平台。
+> 用例是数据而不是代码，执行交给独立的 pytest 子进程，失败归因交给大模型——不用改一行 Python 就能加用例。
 
 ---
 
 ## 目录
 
-- [这个项目解决什么问题](#这个项目解决什么问题)
-- [核心能力](#核心能力)
+- [项目背景](#项目背景)
+- [核心特性](#核心特性)
+- [适用场景](#适用场景)
+- [系统架构](#系统架构)
 - [技术栈](#技术栈)
-- [架构总览](#架构总览)
-- [目录结构](#目录结构)
 - [快速开始](#快速开始)
-- [配置说明](#配置说明)
-- [如何新增一个自定义用例](#如何新增一个自定义用例)
-- [断言类型速查](#断言类型速查)
-- [演示数据说明](#演示数据说明)
-- [测试与持续集成](#测试与持续集成)
-- [已知限制与后续演进](#已知限制与后续演进)
-- [面试常见问题](#面试常见问题)
-- [相关文档](#相关文档)
+- [5 分钟上手教程](#5-分钟上手教程)
+- [常用功能说明](#常用功能说明)
+- [项目目录结构](#项目目录结构)
+- [常见问题（FAQ）](#常见问题faq)
+- [路线图（Roadmap）](#路线图roadmap)
+- [License](#license)
 
 ---
 
-## 这个项目解决什么问题
+## 项目背景
 
-自动化测试项目常见的三个断点：
+自动化测试本身不难写，难的是让它**长期活下去**。团队里常见的三个断点：
 
-1. **用例散落在代码里**：新增一条用例要改 Python、提交代码、跑 CI，业务同学完全无法参与。
-2. **执行与平台强耦合**：本地调试需要起一整套 Web 服务 + 数据库，CI 里想只跑用例很别扭。
-3. **失败定位靠人肉**：报告只告诉你「断言失败」，至于为什么失败、是接口问题还是用例写错了，得自己翻日志。
+**一、用例维护成本高。** 接口用例通常直接写在 Python 代码里，加一条用例要走「改代码 → 提 PR → 合并 → 等 CI」的完整流程。结果是只有会写代码的人能加用例，业务和产品同学即便最清楚校验规则，也只能提需求排队。用例数量一多，脚本就会散落在各个仓库，没有统一的检索和复用入口。
 
-本项目的三个对应设计：
+**二、执行与平台过度耦合。** 很多自研测试平台的执行逻辑和 Web 服务长在同一进程里：想本地调试一条用例，得先起服务、连数据库、配环境变量；想接进 CI，又发现整套依赖太重跑不起来。测试脚本本来应该是最容易被复用的资产，反而被平台锁死了。
 
-- **用例即数据**：用例存在 YAML 或数据库里，靠 `pytest.mark.parametrize` 动态参数化成 N 条独立测试项，新增用例零代码改动。
-- **引擎层零 Web 依赖**：`engine/` 不 import `app/` 的任何模块，既能被平台调度，也能用 `python run_engine.py --file xxx.yaml` 直接在任意 CI 里跑。
-- **AI 参与失败归因**：把失败用例的请求 / 响应 / 断言明细 / 堆栈脱敏后交给 DeepSeek，输出「接口缺陷 / 脚本缺陷 / 环境问题 / 用例设计问题」的分类结论与修复建议；没配 API Key 时降级为基于真实数据的规则兜底，功能不塌陷。
+**三、失败结果难以追溯。** 报告通常只告诉你「断言失败」，至于是接口真的改坏了、还是用例自己写错了、还是环境挂了，得人工翻日志。历史执行记录往往只留一个数字，用例改名、环境删除之后，过去的报告就对不上号了。
+
+这个项目针对这三点给出的是**数据驱动的用例模型 + 分层解耦的执行引擎 + AI 辅助归因**：用例以 YAML 或表单形式存在（不是代码），执行引擎不含任何 Web 依赖因而可以被任意 CI 复用，失败用例的请求/响应/断言明细会被结构化成可追溯的记录并交给大模型做归因。
 
 ---
 
-## 核心能力
+## 核心特性
 
-| 模块 | 能力 |
-| --- | --- |
-| 项目 / 环境管理 | 多项目隔离；每个项目下可配多套环境（base_url、公共 Header、全局变量、超时、SSL 校验），支持默认环境 |
-| 用例管理 | 接口用例（method/url/headers/params/body/form/断言）与 UI 用例（步骤式）统一管理，支持标签、前置用例、变量提取 |
-| 用例集与调度 | 用例集可绑定环境与 5 段 cron 表达式，后台 APScheduler 定时触发；支持失败重跑次数配置 |
-| 执行编排 | 任务级并发（默认上限 4），每个任务一个独立 pytest 子进程，支持超时强杀、失败重跑、整任务重跑 |
-| 报告 | 通过率趋势、项目分布、失败用例 TOP N、任务状态分布；可生成 Allure HTML 报告；UI 失败自动截图 |
-| AI 辅助 | ① 按自然语言描述生成用例 ② 失败根因分析 ③ 基于统计数据的报告问答；三者均可 Mock 降级 |
-| 认证 | JWT（HS256）+ bcrypt 加盐哈希，首次启动自动创建默认管理员 |
-| 引擎 CLI | `run_engine.py` 支持按文件 / 标签 / 类型筛选、覆盖变量、失败重跑、生成 Allure 结果 |
+- [x] **接口测试** —— 支持 GET/POST/PUT/DELETE 等方法，可配置 headers / query / JSON body / form 表单；内置 5 类断言与 13 种比较操作符，支持 JSON Schema 结构校验与简化 JSONPath 取值
+- [x] **UI 测试** —— 基于 Playwright 同步 API，支持 open / click / input / select / hover / press / wait 等 12 种动作；步骤失败自动截图留痕
+- [x] **AI 辅助** —— 接入 DeepSeek：自然语言生成接口用例、失败根因归因、基于统计数据的报告问答；未配置 Key 时自动降级为规则兜底，功能不中断
+- [x] **定时任务** —— 用例集可绑定标准 5 段 cron 表达式，由 APScheduler 后台调度；任务记录与手工执行走同一条链路
+- [x] **Allure 报告** —— 自动生成 Allure HTML 报告并在平台内直接打开；UI 失败截图与执行日志可在线查看
+- [x] **多环境** —— 一个项目下可配置多套环境（基地址、公共请求头、全局变量、超时、SSL 校验），支持指定默认环境
+- [x] **用例编排** —— 支持前置用例（先登录再取数）与响应变量提取，用 `{{变量}}` 在后续请求中引用
+- [x] **执行控制** —— 任务级并发上限、单任务超时强杀、失败自动重跑、整任务一键重跑
+- [x] **零代码加用例** —— 用例以数据形式存储，新增用例不需要改动任何 Python 文件
+- [x] **引擎层可独立运行** —— `engine/` 不含 Web 依赖，可用 `run_engine.py` 直接在任意 CI 中执行 YAML 用例
+
+---
+
+## 适用场景
+
+**适合：**
+
+- 团队有较多 HTTP 接口需要做回归验证，且希望业务/测试同学能自助维护用例，而不是每条都找开发
+- 需要把接口测试与 UI 走查放在同一处管理，共用项目、环境、报告与执行历史
+- 已有 pytest 脚本，想找一个能托管用例、留存历史报告、并做失败归因的轻量平台
+- 希望测试执行能同时支持两种姿势：在平台上点按钮跑，以及在 CI 里通过命令行跑
+- 中小团队或单人项目，希望开箱即用（默认 SQLite，无需额外部署数据库）
+
+**不建议：**
+
+- **需要复杂业务逻辑编排的场景**。用例是数据不是代码，写不了任意 Python 逻辑；复杂的条件分支、循环、自定义加密签名这类需求，直接写 pytest 脚本更合适
+- **大规模并发压测**。这是功能测试平台，不是性能测试工具；虽然依赖里预留了 locust，但目前没有性能测试模块
+- **需要严格权限隔离的多租户场景**。当前所有业务接口只要求登录，角色（admin/member）已建模但尚未接入路由级鉴权
+- **需要与现有测试管理系统深度集成**。目前只有 REST API，没有提供 Webhook、插件机制或第三方系统的同步适配层
+- **想要一个成熟的商业级平台**。这是一个功能完整但仍在演进的开源项目，容器化、数据库迁移等能力见下方 Roadmap
+
+---
+
+## 系统架构
+
+```mermaid
+flowchart TB
+    subgraph WEB["web/ · 前端层（Vue 3 SPA）"]
+        W1["用例管理 · 用例集 · 执行历史 · 报告 · 环境配置 · AI 助手"]
+    end
+
+    subgraph APP["app/ · 服务层（FastAPI）"]
+        A1["api/ 路由与依赖注入"]
+        A2["services/ 执行编排 · 报告聚合 · AI · 定时调度"]
+        A3["models/ 6 张 ORM 表"]
+        A4["schemas/ 出入参契约"]
+    end
+
+    subgraph ENGINE["engine/ · 引擎层（纯 Python，无 Web 依赖）"]
+        E1["runner 执行内核"]
+        E2["client 接口客户端"]
+        E3["ui_actions Playwright 封装"]
+        E4["assertions 断言引擎"]
+        E5["data_loader 用例加载"]
+    end
+
+    subgraph SUB["子进程 · pytest 运行期"]
+        S1["test_dynamic_cases.py 动态参数化"]
+        S2["conftest.py 结果收集插件"]
+    end
+
+    WEB -->|"HTTP /api（Bearer Token）"| APP
+    APP -->|"单向 import"| ENGINE
+    ENGINE -->|"subprocess 启动"| SUB
+    SUB -.->|"结果 JSON 文件回传"| APP
+    APP -->|"/static 截图与 Allure 报告"| WEB
+```
+
+三个关键设计点：
+
+1. **依赖方向单向向下**：`web → app → engine`。`engine/` 不 import `app/` 的任何模块，因此它可以脱离 Web 服务独立运行（`python run_engine.py --file xxx.yaml`）。
+2. **用例是数据**：平台把用例序列化成 JSON 载荷交给 pytest，用 `pytest.mark.parametrize` 动态展开成 N 条独立测试项，新增用例零代码改动。
+3. **执行在子进程**：每次任务启动一个独立 pytest 子进程，服务进程不承担被测逻辑的崩溃风险，且超时能够真正强杀。
+
+更详细的分层设计、数据模型与执行时序见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ---
 
 ## 技术栈
 
-**后端**：FastAPI 0.115 · SQLAlchemy 2.0 · Pydantic 2.10 · pydantic-settings · Uvicorn · APScheduler · loguru
-**测试引擎**：pytest 8.3 · pytest-rerunfailures · Playwright（同步 API）· httpx · jsonschema · PyYAML · allure-pytest
-**AI**：openai SDK 1.59（指向 DeepSeek 的 OpenAI 兼容端点，默认模型 `deepseek-v4`）
-**前端**：Vue 3.5 · TypeScript 5.7 · Vite 6 · Element Plus · Pinia · Vue Router · ECharts · axios
-**数据**：SQLite（开箱即用）／MySQL（PyMySQL，改一个配置项即可切换）
-**工程化**：ruff · black · pre-commit · GitHub Actions
+**后端**
 
----
+| 组件 | 选型 |
+| --- | --- |
+| Web 框架 | FastAPI 0.115 + Uvicorn |
+| ORM / 校验 | SQLAlchemy 2.0 · Pydantic 2.10 · pydantic-settings |
+| 数据库 | SQLite（默认，开箱即用）／ MySQL（PyMySQL，改一个配置项切换） |
+| 认证 | python-jose（JWT / HS256）+ bcrypt |
+| 调度 | APScheduler 3.11 |
+| 日志 | loguru（按天切割、彩色控制台） |
 
-## 架构总览
+**测试引擎**
 
-三层结构，**依赖方向单向向下**：`web → app → engine`，`engine` 不知道 `app` 的存在。
+| 组件 | 选型 |
+| --- | --- |
+| 用例执行 | pytest 8.3 + pytest-asyncio |
+| 失败重跑 | pytest-rerunfailures |
+| HTTP 客户端 | httpx |
+| UI 自动化 | Playwright 1.49（同步 API） |
+| 结构校验 | jsonschema |
+| 用例解析 | PyYAML |
+| 报告 | allure-pytest |
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  web/   Vue 3 SPA                                            │
-│  用例管理 / 用例集 / 执行历史 / 报告 / 环境配置 / AI 助手        │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ HTTP（Bearer Token）
-                            │ 成功直接返回数据体；失败返回 {success,code,message,data}
-┌───────────────────────────▼──────────────────────────────────┐
-│  app/   FastAPI 服务层                                        │
-│                                                              │
-│  api/       路由：只做参数声明与依赖注入，不写业务逻辑           │
-│  services/  业务：执行编排 / 报告聚合 / AI / 调度 / 演示数据      │
-│  models/    ORM：6 张表                                       │
-│  schemas/   Pydantic：出入参契约（前端类型与之严格对齐）         │
-│  deps.py    依赖注入：会话 / 当前用户 / 分页 / 项目归属校验       │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ 单向依赖：app → engine（engine 从不反向 import）
-                            │ 契约：CaseTelemetry + 结果 JSON 文件
-┌───────────────────────────▼──────────────────────────────────┐
-│  engine/   测试引擎层（纯 Python，无任何 Web 框架依赖）          │
-│                                                              │
-│  runner.py      用例执行内核 + PytestRunner（子进程编排）        │
-│  client.py      httpx 接口客户端（变量渲染、敏感头脱敏）          │
-│  ui_actions.py  Playwright 同步 API 封装（12 种动作）            │
-│  assertions.py  5 类断言 + 13 种操作符                          │
-│  data_loader.py YAML/JSON 用例加载与筛选                        │
-│  allure_helper.py Allure 可选依赖（不可用时全部 no-op）          │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ 通过子进程启动
-┌───────────────────────────▼──────────────────────────────────┐
-│  testcases/  pytest 运行期入口                                 │
-│  conftest.py            结果收集插件（引擎与服务层唯一契约点）    │
-│  test_dynamic_cases.py  把平台下发的用例参数化成 N 条测试项       │
-└──────────────────────────────────────────────────────────────┘
-```
+**AI**
 
-**唯一契约点**：`app` 与 `engine` 之间不通过函数调用传递结果，而是：
+| 组件 | 选型 |
+| --- | --- |
+| 模型服务 | DeepSeek（默认 `deepseek-v4`） |
+| 调用方式 | OpenAI 官方 SDK 1.59 指向 DeepSeek 的 OpenAI 兼容端点 |
 
-1. `app` 把 `{task_id, env, cases}` 写成 JSON，路径通过 `ATP_CASE_FILE` 传给子进程；
-2. `engine` 在进程内用 `CaseTelemetry` 记录请求 / 响应 / 断言 / 截图明细；
-3. `testcases/conftest.py` 的 pytest 钩子在会话结束时把结果写进 `ATP_RESULT_FILE`；
-4. `app` 读回该 JSON，落库、渲染报告、喂给 AI。
+**前端**
 
-`testcases/conftest.py` 顶部有一句硬约束注释：**它不能 import `app/` 下的任何模块**，否则引擎层就无法脱离 Web 独立运行了。这条约束是整个分层设计的地基。
+| 组件 | 选型 |
+| --- | --- |
+| 框架 | Vue 3.5 + TypeScript 5.7 |
+| 构建 | Vite 6 |
+| UI 组件 | Element Plus |
+| 状态管理 | Pinia |
+| 路由 | Vue Router 4 |
+| 图表 | ECharts |
+| 请求 | axios（统一拦截器处理鉴权与错误） |
 
-更详细的设计说明见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+**工程化**
 
----
-
-## 目录结构
-
-```
-auto-test-platform/
-├── app/                          # FastAPI 服务层
-│   ├── api/                      # 路由（auth/projects/environments/testcases/testsuites/tasks/dashboard/ai）
-│   ├── models/                   # ORM：users / projects / environments / test_cases / test_suites / tasks
-│   ├── schemas/                  # Pydantic 出入参契约
-│   ├── services/
-│   │   ├── test_runner.py        # 执行编排：任务级并发 + pytest 子进程 + 结果落库
-│   │   ├── report_service.py     # 统计聚合与报告数据
-│   │   ├── ai_service.py         # DeepSeek 调用 + 规则降级
-│   │   ├── scheduler.py          # APScheduler 用例集定时调度
-│   │   ├── seed.py               # 首次启动的演示数据初始化
-│   │   └── prompts/              # AI 提示词（生成用例 / 失败分析 / 报告问答）
-│   ├── utils/                    # JWT、bcrypt、loguru 日志
-│   ├── config.py                 # 全局配置唯一入口（pydantic-settings）
-│   ├── database.py               # 引擎与会话
-│   ├── deps.py                   # 依赖注入
-│   └── main.py                   # 应用装配（只做装配，不写业务）
-├── engine/                       # 测试引擎层（可脱离 Web 独立运行）
-├── testcases/                    # pytest 运行期入口与结果收集插件
-├── web/                          # Vue 3 前端
-│   ├── src/{api,components,router,stores,types,utils,views}
-│   └── nginx.conf                # 生产部署用的反代与 SPA 回退配置
-├── data/                         # 内置演示用例（httpbin / saucedemo）
-├── reports/                      # 运行时产物：日志、Allure、失败截图（不入库）
-├── .github/workflows/ci.yml      # 持续集成流水线
-├── run_engine.py                 # 引擎层独立命令行入口
-├── pyproject.toml                # ruff / black / pytest 配置
-├── requirements.txt
-├── .env.example                  # 环境变量样板
-└── .pre-commit-config.yaml
-```
+ruff（lint）· black（格式化）· pre-commit · GitHub Actions · Docker / Docker Compose
 
 ---
 
@@ -163,163 +175,278 @@ auto-test-platform/
 
 ### 环境要求
 
-- Python **3.11+**（推荐 3.12）
-- Node **18.18+**（推荐 20 LTS）+ pnpm **9**
-- 可选：Java + Allure CLI（仅当需要生成 Allure HTML 报告时）
+| 场景 | 依赖 |
+| --- | --- |
+| Docker 方式 | Docker 20.10+ 与 Docker Compose v2 |
+| 本地方式 | Python **3.11+**（推荐 3.12）、Node **18.18+**（推荐 20 LTS）、pnpm **9** |
+| 可选 | Java 8+ 与 Allure CLI（仅本地方式需要生成 Allure HTML 报告时） |
 
-### 1. 后端
+### 方式一：Docker Compose 一键启动（推荐）
+
+无需在本机安装 Python 与 Node，两条命令拉起全部服务：
 
 ```bash
 git clone https://github.com/fyb580231/auto-test-platform.git
 cd auto-test-platform
 
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-
-pip install -r requirements.txt
-
-# 复制配置样板（.env 已被 .gitignore 忽略）
+# 可选：按需覆盖配置（JWT 密钥、DeepSeek Key、端口等）
 cp .env.example .env
 
-# 启动服务
+docker compose up -d --build
+```
+
+启动完成后：
+
+| 入口 | 地址 |
+| --- | --- |
+| 平台首页 | http://localhost:8080 |
+| 后端接口文档 | http://localhost:8000/docs |
+| 健康检查 | http://localhost:8000/api/health |
+
+浏览器只需要访问 **8080** —— 前端容器里的 nginx 已经把 `/api` 与 `/static` 反向代理到后端，前后端同源，不存在跨域问题。
+
+常用命令：
+
+```bash
+docker compose logs -f backend     # 跟踪后端日志
+docker compose ps                  # 查看容器状态
+docker compose down                # 停止并移除容器（数据保留在 ./data 与 ./reports）
+docker compose down -v             # 连同匿名卷一起清理
+```
+
+**关于镜像构建参数**（在 `docker-compose.yml` 的 `build.args` 下调整）：
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `INSTALL_ALLURE` | `true` | 装入 Allure CLI 与 JRE，任务结束后可自动生成 HTML 报告 |
+| `INSTALL_PLAYWRIGHT_BROWSERS` | `false` | 装入 Chromium 内核，**执行 UI 用例时必须打开**（镜像会增大约 300MB） |
+| `PIP_INDEX_URL` | 空 | 国内网络可设为 `https://pypi.tuna.tsinghua.edu.cn/simple` 加速依赖安装 |
+
+例如需要跑 UI 用例：
+
+```bash
+INSTALL_PLAYWRIGHT_BROWSERS=true docker compose up -d --build
+```
+
+> **数据持久化**：`./data`（SQLite 库与内置演示用例）和 `./reports`（日志、失败截图、Allure 报告）都以 volume 挂载，容器重建不会丢数据。
+
+### 方式二：本地分别启动后端与前端
+
+适合需要改代码、断点调试的场景。
+
+**第 1 步：准备后端**
+
+```bash
+git clone https://github.com/fyb580231/auto-test-platform.git
+cd auto-test-platform
+
+# 创建并激活虚拟环境
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 复制配置样板（.env 已被 .gitignore 忽略，不会进仓库）
+cp .env.example .env
+```
+
+**第 2 步：启动后端**
+
+```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-启动后：
+首次启动会自动完成：建表 → 创建默认管理员 → 写入演示项目/环境/用例/用例集 → 启动定时调度器。
 
-- 接口文档：http://127.0.0.1:8000/docs
-- 健康检查：http://127.0.0.1:8000/api/health
-- 默认账号：**admin / admin123**（首次启动自动创建，生产环境务必修改）
+验证后端已就绪：
 
-首次启动会自动建表、写入演示项目 / 环境 / 用例 / 用例集，并启动定时调度器。
+```bash
+curl http://127.0.0.1:8000/api/health
+```
 
-### 2. 前端
+**第 3 步：准备并启动前端**
+
+另开一个终端：
 
 ```bash
 cd web
 pnpm install
-pnpm dev          # 开发服务器，已把 /api 与 /static 代理到 127.0.0.1:8000
+pnpm dev
 ```
+
+开发服务器默认监听 **5173**，并已把 `/api`、`/static` 代理到 `http://127.0.0.1:8000`，因此前端代码里不硬编码后端地址。
 
 浏览器打开 http://localhost:5173 即可。
 
-生产构建：
+**第 4 步（可选）：命令行直接跑用例**
+
+引擎层不依赖 Web 服务，可以直接跑用例文件：
 
 ```bash
-pnpm build        # 先 vue-tsc --noEmit 做类型检查，再 vite build 输出到 web/dist
-```
-
-`web/nginx.conf` 已备好 SPA 回退与 `/api/`、`/static/` 的反向代理（默认指向容器名 `backend`，按实际部署环境调整）。
-
-### 3. 引擎层 CLI（不启动 Web）
-
-这是引擎层可独立运行的最直接体现——**不起 FastAPI、不连数据库**：
-
-```bash
-# 跑一个 YAML 用例文件里的全部用例
+# 跑一个 YAML 用例文件
 python run_engine.py --file data/demo_api_cases.yaml
 
 # 只跑 smoke 标签
 python run_engine.py --file data/demo_api_cases.yaml --tags smoke
 
-# 只跑 UI 用例、失败重跑 1 次、并生成 Allure 结果
-python run_engine.py --file data/demo_ui_cases.yaml --type ui --retry 1 --allure
-
-# 命令行覆盖变量（不改动用例文件）
+# 覆盖环境地址（不改动用例文件）
 python run_engine.py --file data/demo_api_cases.yaml --var base_url=https://httpbin.org
 
 # 查看全部参数
 python run_engine.py --help
 ```
 
-> 跑 UI 用例前需要先装浏览器内核：`playwright install chromium`
+### 默认登录账号
 
-### 4. 演示数据里有一条"故意失败"的用例
+| 用户名 | 密码 | 角色 |
+| --- | --- | --- |
+| `admin` | `admin123` | admin（首次启动自动创建） |
 
-`data/demo_api_cases.yaml` 中的 `api_010` 会断言一个响应里不存在的字段 `$.business_code`，**它必然会失败**。这不是 bug，而是为了让「失败报告 + UI 截图 + AI 失败归因」这三块能力有真实的失败样本可看。演完删掉即可。
-
----
-
-## 配置说明
-
-全部配置收敛在 `app/config.py` 一个模块，其他代码一律 `from app.config import settings`，**禁止在各处散落 `os.getenv`**——环境变量的来源与默认值只有一处，便于审计与文档化。配置从 `.env` 读取（`extra="ignore"`，大小写不敏感）。
-
-| 分类 | 变量 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| 应用 | `APP_NAME` | `auto-test-platform` | 应用名称 |
-| | `APP_VERSION` | `1.0.0` | 版本号 |
-| | `DEBUG` | `false` | 开启后 500 响应会带真实错误信息 |
-| | `HOST` / `PORT` | `0.0.0.0` / `8000` | 监听地址与端口 |
-| | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | 逗号分隔的跨域白名单 |
-| 数据库 | `DB_TYPE` | `sqlite` | `sqlite` 或 `mysql` |
-| | `SQLITE_PATH` | `./data/auto_test_platform.db` | SQLite 文件路径（相对路径按项目根解析） |
-| | `MYSQL_HOST` / `MYSQL_PORT` | `127.0.0.1` / `3306` | MySQL 连接信息 |
-| | `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | `root` / 空 / `auto_test_platform` | MySQL 库信息 |
-| 认证 | `JWT_SECRET` | `dev-only-secret-please-change` | **生产必须替换** |
-| | `JWT_ALGORITHM` | `HS256` | 签名算法 |
-| | `JWT_EXPIRE_MINUTES` | `1440` | 令牌有效期（分钟） |
-| 管理员 | `DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动自动创建 |
-| AI | `DEEPSEEK_API_KEY` | 空 | 留空则 AI 模块自动降级为 Mock |
-| | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容端点 |
-| | `DEEPSEEK_MODEL` | `deepseek-v4` | 无 v4 权限时改成 `deepseek-chat` 即可 |
-| | `AI_ENABLED` / `AI_MOCK` | `true` / `false` | 总开关与强制 Mock 开关 |
-| | `AI_TIMEOUT_SECONDS` | `30` | 单次请求超时 |
-| | `AI_MAX_RETRIES` | `2` | 服务层重试次数（指数退避） |
-| | `AI_MAX_TOKENS` | `4096` | 单次生成上限 |
-| | `AI_MAX_LOG_CHARS` | `6000` | 失败分析送入模型的最大日志字符数（成本控制） |
-| 执行引擎 | `PYTEST_TIMEOUT_SECONDS` | `300` | 单任务执行超时，超时强制终止 |
-| | `DEFAULT_RETRY_TIMES` | `2` | 用例默认失败重跑次数 |
-| | `MAX_CONCURRENT_TASKS` | `4` | 同时执行的任务数上限 |
-| | `PYTEST_MAX_WORKERS` | `1` | 预留：任务内并行度（当前未接线） |
-| | `ALLURE_AUTO_GENERATE` | `true` | 是否自动生成 Allure HTML |
-| | `ALLURE_COMMAND` | `allure` | Allure CLI 命令名 |
-| 日志 | `LOG_LEVEL` | `INFO` | 日志级别 |
-| | `LOG_DIR` | `./reports/logs` | 日志目录，按天切割 |
-| | `LOG_RETENTION_DAYS` | `14` | 日志保留天数 |
-
-派生属性（只读，由上述配置算出）：`database_url`、`cors_origin_list`、`is_sqlite`、`ai_available`、`sqlite_file_path`、`reports_dir`、`logs_dir`、`data_dir`。
+> **生产环境务必修改**：把 `.env` 里的 `DEFAULT_ADMIN_PASSWORD` 与 `JWT_SECRET` 换成随机长字符串，再重启服务。生成随机密钥：
+> ```bash
+> python -c "import secrets; print(secrets.token_urlsafe(48))"
+> ```
 
 ---
 
-## 如何新增一个自定义用例
+## 5 分钟上手教程
 
-### 方式一：在平台上建（推荐日常使用）
+下面用「给 httpbin.org 加一条连通性用例」走完整个流程。每一步同时给出 **界面操作** 与 **API 调用** 两种方式，任选其一。
 
-1. 在「项目管理」里创建项目，在「环境配置」里配好目标环境的 `base_url`；
-2. 进入「用例管理」→ 新建用例，选择类型（接口 / UI）；
-3. 接口用例填 method / url / headers / params / body，UI 用例填步骤（动作 + 选择器 + 值）；
-4. 在断言区配置期望结果；
-5. 在「用例集」里勾选该用例，点执行，或直接单条运行。
+### 第 1 步：创建项目
 
-平台侧的用例字段白名单定义在 `app/api/testcases.py`，模型方法 `TestCase.to_engine_payload()` 负责把 ORM 对象转成引擎能吃的嵌套结构。
+在平台里，项目是「用例 / 用例集 / 执行历史 / 环境配置」的统一上下文。
 
-### 方式二：写 YAML/JSON 文件（适合纳入代码仓库、走 CI）
+- **界面**：左侧菜单「项目管理」→「新建项目」，名称填 `demo-project`
+- **API**：先登录拿 token，后续请求都带上它
 
-用例文件的顶层结构：
+```bash
+# 登录（localhost:8000 是本地方式的后端；Docker 方式同样可用 8080 域名下的 /api）
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' \
+  | python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+# 创建项目
+curl -s -X POST http://localhost:8000/api/projects \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "demo-project", "description": "5 分钟上手示例"}'
+```
+
+### 第 2 步：配置环境
+
+用例里的 `url` 通常写相对路径，实际地址由环境的 `base_url` 拼出来，这样换环境不用改用例。
+
+- **界面**：左侧菜单「环境配置」→「新建环境」
+- **API**（假设上一步创建的项目 ID 是 `1`）：
+
+```bash
+curl -s -X POST http://localhost:8000/api/projects/1/environments \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "name": "dev",
+        "base_url": "https://httpbin.org",
+        "is_default": true,
+        "timeout": 15
+      }'
+```
+
+### 第 3 步：添加第一个接口用例
+
+- **界面**：左侧菜单「用例管理」→「新建用例」，按表单填入方法、路径、断言
+- **API**：
+
+```bash
+curl -s -X POST http://localhost:8000/api/projects/1/testcases \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "name": "GET /get 连通性检查",
+        "case_type": "api",
+        "description": "验证服务可访问，且 Query 参数能被正确回显",
+        "tags": ["smoke"],
+        "method": "GET",
+        "url": "/get",
+        "params": {"source": "tutorial", "page": 1},
+        "assertions": [
+          {"type": "status_code", "expected": 200, "name": "状态码 200"},
+          {"type": "json_field", "field": "$.args.source", "op": "eq",
+           "expected": "tutorial", "message": "Query 参数 source 未被服务端接收"},
+          {"type": "response_time", "expected": 10000, "name": "响应时间小于 10s"}
+        ]
+      }'
+```
+
+### 第 4 步：执行用例
+
+执行是**异步**的：接口立刻返回一条任务记录，真正的执行在后台子进程里进行。
+
+- **界面**：在用例列表勾选该用例 →「批量执行」；或点该行的「执行」
+- **API**（假设用例 ID 是 `1`）：
+
+```bash
+# 单条执行；也可用 POST /api/testcases/batch-run 传 {"case_ids": [1, 2]}
+curl -s -X POST http://localhost:8000/api/testcases/1/run \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+响应里的 `id` 就是任务 ID，用它查询结果：
+
+```bash
+curl -s http://localhost:8000/api/tasks/1 -H "Authorization: Bearer $TOKEN"
+```
+
+任务状态流转为 `pending → running → success / failed / error`。
+
+### 第 5 步：查看报告
+
+- **界面**：左侧菜单「执行历史」→ 点进任务详情，可以看到每条用例的**请求、响应、断言明细、耗时、重跑次数**；失败用例可直接触发 AI 归因分析；如果生成了 Allure 报告，详情页会给出「查看 Allure 报告」入口，指向 `/static/allure/<task_no>/index.html`
+- **API**：
+
+```bash
+# 任务详情（含每条用例结果）
+curl -s http://localhost:8000/api/tasks/1 -H "Authorization: Bearer $TOKEN"
+
+# 执行日志（stdout 尾部，单次最多 200000 字符，超出会置 truncated 标记）
+curl -s http://localhost:8000/api/tasks/1/log -H "Authorization: Bearer $TOKEN"
+
+# 首页统计：通过率趋势、项目分布、失败用例 TOP N
+curl -s "http://localhost:8000/api/dashboard/stats?days=7" -H "Authorization: Bearer $TOKEN"
+```
+
+> **试试失败长什么样**：内置演示用例 `api_010` 会断言一个响应里不存在的字段 `$.business_code`，**它必然失败**。这不是 bug，而是特意留的失败样本，方便你直接体验失败报告、UI 截图与 AI 失败归因。演示完删掉即可。
+
+---
+
+## 常用功能说明
+
+### 如何写一个接口用例
+
+**界面上**：用例管理 → 新建用例，选择类型 `api`，填写方法、路径、参数与断言即可。
+
+**以文件形式**（适合纳入代码仓库、走 CI）：用例文件顶层是 `variables` + `cases`：
 
 ```yaml
-variables:                      # 文件级变量，可被用例内 {{变量名}} 引用
+variables:                      # 文件级变量，可在用例内用 {{变量名}} 引用
   base_url: https://httpbin.org
   test_username: test_user_001
 
 cases:
-  - id: api_001                              # 唯一 ID（平台内用于定位）
-    name: "GET /get - 连通性与 Query 参数回显"   # 可读名称
-    case_type: api                           # api | ui
+  - id: api_001
+    name: "GET /get - 连通性与 Query 参数回显"
+    case_type: api
     description: "这条用例在做什么"
-    tags: ["smoke", "critical"]              # smoke | regression | critical，可多选
+    tags: ["smoke", "critical"]          # 可多选，用于筛选执行
     method: GET
-    url: /get                                # 相对路径，与 variables.base_url 拼接
+    url: /get                            # 相对路径，与 environment.base_url 拼接
     headers:
       X-Trace-Id: "{{trace_id}}"
     params:
       source: auto_test_platform
       page: 1
-    body: { ... }                            # 请求体（JSON）
-    form: { ... }                            # 表单（与 body 二选一）
-    extract:                                 # 从响应里提取变量，供后续用例引用
-      token: "$.data.token"
     assertions:
       - type: status_code
         expected: 200
@@ -331,12 +458,46 @@ cases:
         message: "Query 参数 source 未被服务端正确接收"
 ```
 
-UI 用例把 `method/url` 换成 `base_url` + `steps`：
+**用例字段说明**：
+
+| 字段 | 说明 |
+| --- | --- |
+| `name` / `description` | 用例名称与说明 |
+| `case_type` | `api` 或 `ui` |
+| `tags` | 标签列表，执行时可按标签筛选（自动转小写去重） |
+| `method` / `url` | 请求方法与地址（`url` 支持相对路径） |
+| `headers` / `params` / `body` / `form` | 请求头、Query 参数、JSON 体、表单体（`body` 与 `form` 二选一） |
+| `extract` | 从响应中提取变量供后续引用，格式 `[{name, path}]`，如 `{"name": "token", "path": "$.data.token"}` |
+| `setup_case_id` | 前置用例 ID（平台模式），典型用法是先执行登录用例拿到 token |
+| `assertions` | 断言规则列表 |
+| `enabled` | 是否启用，停用的用例会被执行编排跳过 |
+
+**变量渲染**：`{{变量}}` 占位符可用于 url、headers、params、body、断言期望值以及 UI 步骤的 selector / value。变量优先级为：**命令行 `--var` 覆盖 > 用例内定义 > 文件级 `variables` > 环境配置**。变量名中含 `token` / `secret` / `password` / `key` 时，日志会自动打码。
+
+**支持的断言类型：**
+
+| 类型 | 作用 | 关键字段 |
+| --- | --- | --- |
+| `status_code` | 校验 HTTP 状态码 | `expected` |
+| `json_field` | 按简化 JSONPath 取值后比较 | `field`（如 `$.data.items[0].id`）、`op`、`expected` |
+| `response_time` | 校验响应耗时不超过给定毫秒数 | `expected`（毫秒） |
+| `schema` | 用 JSON Schema 校验响应结构 | `expected`（Schema 对象） |
+| `header` | 校验响应头 | `field`、`op`、`expected` |
+
+**支持的操作符**：`eq` · `ne` · `contains` · `not_contains` · `gt` · `lt` · `ge` · `le` · `empty` · `not_empty` · `in` · `regex` · `length_eq`
+
+> 所有断言会**全部执行完再统一汇总**失败明细，而不是遇到第一个失败就中断 —— 一次执行就能看全所有问题。
+> 若一条用例没有配置任何断言，会兜底断言 `status_code == 200`，避免出现「跑了但没校验」的假绿灯。
+
+### 如何写一个 UI 用例
+
+UI 用例把 `method` / `url` 换成 `base_url` + `steps`：
 
 ```yaml
   - id: ui_001
-    name: "登录成功"
+    name: "登录成功并进入商品列表"
     case_type: ui
+    tags: ["smoke"]
     base_url: https://www.saucedemo.com
     steps:
       - action: open
@@ -351,170 +512,427 @@ UI 用例把 `method/url` 换成 `base_url` + `steps`：
         selector: "#login-button"
       - action: assert_url
         expected_contains: inventory
-      - action: screenshot          # 需要留痕时显式截图
+      - action: screenshot
         name: "登录后首页"
+    assertions:
+      - type: status_code
+        expected: 200
 ```
 
-**字段要点**：
+**支持的 12 种动作**：`open` · `click` · `input` · `select` · `hover` · `press` · `wait` · `assert_visible` · `assert_text` · `assert_value` · `assert_url` · `screenshot`
 
-- `url` 支持相对路径（自动拼 `variables.base_url`）也支持绝对 URL；
-- `{{变量}}` 占位符可用于 url / headers / params / body / 断言期望值 / UI 步骤的 selector 与 value；变量来源优先级为「命令行 `--var` 覆盖 > 用例内定义 > 文件级 `variables` > 环境配置」，变量名里含 `token`/`secret`/`password`/`key` 时日志自动打码；
-- `setup_ref`（CLI 模式）和 `setup_case`（平台模式）用于声明前置用例，比如先登录拿 token；CLI 会在内存里把 `setup_ref` 展开成内联的前置用例，保证两种模式的执行行为一致；
-- 没有配置任何断言时，会兜底断言 `status_code == 200`，避免出现"跑了但没校验"的假绿灯。
+每个步骤可配 `selector`、`value`、`timeout`（默认 15000ms）与 `name`。
 
-**UI 支持的动作**（共 12 种）：
+**失败自动截图**：任一步骤失败都会立即截图并中断该用例，截图保存到 `reports/screenshots/<task_id>/`，文件名形如 `<用例名>_step<序号>_failed.png`，平台会把它转成 `/static/screenshots/...` 的 URL 展示在任务详情里。
 
-`open` · `click` · `input` · `select` · `hover` · `press` · `wait` · `assert_visible` · `assert_text` · `assert_value` · `assert_url` · `screenshot`
+> **前提**：执行 UI 用例需要安装 Playwright 浏览器内核：
+> - 本地方式：`playwright install chromium`
+> - Docker 方式：构建时打开 `INSTALL_PLAYWRIGHT_BROWSERS=true`
 
-任一 UI 步骤失败会**立即截图**并抛错，截图落在 `reports/screenshots/<task_id>/`，文件名形如 `<用例名>_step<序号>_failed.png`，平台会自动把它转成 `/static/screenshots/...` 的 URL 供前端展示。
+### 如何配置环境变量
 
-**写完之后怎么跑**：
+全部配置收敛在 [app/config.py](app/config.py) 一个模块，其余代码一律 `from app.config import settings`，因此环境变量的来源与默认值只有一处。
 
-```bash
-# 命令行直接验证
-python run_engine.py --file ./my_cases.yaml --tags smoke
+**配置方式**：
 
-# 或者把文件放进 data/，重启后端服务，平台会自动加载成演示数据
-```
+- **本地方式**：`cp .env.example .env`，编辑 `.env`（已被 `.gitignore` 忽略）
+- **Docker 方式**：在同目录放 `.env`，`docker-compose.yml` 会自动读取并覆盖其中的默认值
 
----
+**常用配置项**：
 
-## 断言类型速查
+| 分类 | 变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| 应用 | `HOST` / `PORT` | `0.0.0.0` / `8000` | 监听地址与端口 |
+| | `DEBUG` | `false` | 开启后 500 响应会带真实错误信息，生产环境请保持关闭 |
+| | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | 逗号分隔的跨域白名单 |
+| 数据库 | `DB_TYPE` | `sqlite` | 可选 `sqlite` 或 `mysql` |
+| | `SQLITE_PATH` | `./data/auto_test_platform.db` | SQLite 文件路径（相对路径按项目根解析） |
+| | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | `127.0.0.1` / `3306` / `root` / 空 / `auto_test_platform` | 切换 MySQL 时填写 |
+| 认证 | `JWT_SECRET` | `dev-only-secret-please-change` | **生产必须替换** |
+| | `JWT_EXPIRE_MINUTES` | `1440` | 令牌有效期（分钟） |
+| 管理员 | `DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动自动创建 |
+| AI | `DEEPSEEK_API_KEY` | 空 | 留空则自动降级为 Mock |
+| | `DEEPSEEK_MODEL` | `deepseek-v4` | 无 v4 权限时改成 `deepseek-chat` |
+| | `AI_ENABLED` / `AI_MOCK` | `true` / `false` | 总开关与强制 Mock 开关 |
+| | `AI_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` / `AI_MAX_TOKENS` | `30` / `2` / `4096` | 超时、重试次数与单次生成上限 |
+| | `AI_MAX_LOG_CHARS` | `6000` | 失败分析送入模型的最大日志字符数（成本控制） |
+| 执行引擎 | `PYTEST_TIMEOUT_SECONDS` | `300` | 单任务执行超时，超时会被强制终止并记为 error |
+| | `MAX_CONCURRENT_TASKS` | `4` | 同时执行的任务数上限 |
+| | `DEFAULT_RETRY_TIMES` | `2` | 用例默认失败重跑次数 |
+| | `ALLURE_AUTO_GENERATE` / `ALLURE_COMMAND` | `true` / `allure` | 是否自动生成 Allure HTML 及命令名 |
+| 日志 | `LOG_LEVEL` / `LOG_DIR` / `LOG_RETENTION_DAYS` | `INFO` / `./reports/logs` / `14` | 日志级别、目录与保留天数 |
 
-`engine/assertions.py` 支持 5 类断言、13 种比较操作符：
+> **改完配置要重启服务**：配置通过 `lru_cache` 单例在进程启动时读取一次，修改 `.env` 后需要重启进程才会生效。
 
-| 断言类型 | 作用 | 关键字段 |
+### 如何定时执行测试集
+
+1. **准备用例集**：「用例集」页面新建，勾选要包含的用例，并选择默认执行环境；
+2. **填写 cron 表达式**：必须是**标准 5 段格式**（分 时 日 月 周），例如：
+
+   | 表达式 | 含义 |
+   | --- | --- |
+   | `0 2 * * *` | 每天 02:00 |
+   | `30 9 * * 1-5` | 工作日 09:30 |
+   | `0 */6 * * *` | 每 6 小时 |
+   | `0 8 1 * *` | 每月 1 日 08:00 |
+
+   表达式段数不是 5 段会在保存时直接报错，避免非法表达式污染调度器。
+
+3. **启用**：用例集的 `enabled` 开关打开后，调度器会自动注册任务；关闭或清空 cron 则注销。
+
+**调度行为**：
+
+- 调度器与应用生命周期绑定，服务启动时从数据库**全量重建**任务列表（数据库是唯一事实来源，不额外维护持久化 jobstore）
+- 定时触发创建的任务与手工执行**走完全相同的链路**，任务列表里通过触发类型区分
+- 时区固定为 `Asia/Shanghai`；任务配置了 `coalesce`（错过多次只补跑一次）与 `max_instances=1`（同一用例集不并发）
+- 查看当前已注册的全部定时任务：`GET /api/scheduler/jobs`
+
+### AI 功能怎么用
+
+AI 能力由 DeepSeek 提供，三项功能：
+
+| 功能 | 入口 | 说明 |
 | --- | --- | --- |
-| `status_code` | HTTP 状态码相等 | `expected` |
-| `json_field` | 按简化 JSONPath 取字段后比较 | `field`（如 `$.data.items[0].id`）、`op`、`expected` |
-| `response_time` | 响应耗时 ≤ 期望毫秒数 | `expected`（毫秒） |
-| `schema` | 用 JSON Schema 校验响应结构 | `expected`（Schema 对象，基于 jsonschema） |
-| `header` | 校验响应头 | `field`、`op`、`expected` |
+| 生成用例 | `POST /api/ai/generate-cases` | 用自然语言描述接口，生成可直接执行的结构化用例 |
+| 失败归因 | `POST /api/ai/analyze-failure` | 分析失败用例的请求/响应/断言/堆栈，输出分类结论与修复建议 |
+| 报告问答 | `POST /api/ai/query-report` | 基于真实统计数据回答「本周通过率为什么下降」这类问题 |
 
-**操作符**：`eq` · `ne` · `contains` · `not_contains` · `gt` · `lt` · `ge` · `le` · `empty` · `not_empty` · `in` · `regex` · `length_eq`
+**启用步骤**：
 
-所有断言执行完毕后统一汇总失败明细，抛出的异常里带有全部失败项的完整信息，而不是遇到第一个失败就中断——这样一次执行就能看全所有问题。
+1. 到 [platform.deepseek.com](https://platform.deepseek.com) 申请 API Key；
+2. 写入配置：
 
-> 简化版 JSONPath 支持 `$.a.b[0].c` 这类路径，足够覆盖日常接口断言；不支持的复杂表达式（如递归下降、过滤器）建议直接用 `schema` 断言。
+   ```dotenv
+   # .env
+   DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
+   DEEPSEEK_MODEL=deepseek-v4        # 若账号暂无 v4 权限，改成 deepseek-chat
+   ```
+
+   Docker 方式也可以直接编辑同目录的 `.env`，`docker-compose.yml` 会自动读取。
+
+3. **重启服务**（配置在进程启动时读取一次）；
+4. 验证是否生效：
+
+   ```bash
+   curl -s http://localhost:8000/api/ai/status -H "Authorization: Bearer $TOKEN"
+   ```
+
+**降级行为（重点）**：以下任意一种情况都会自动降级为「Mock 模式」——`AI_ENABLED=false`、`AI_MOCK=true`、`DEEPSEEK_API_KEY` 为空，**以及调用过程中发生任何异常**。降级后不会返回「AI 不可用」，而是返回**基于真实数据的规则结果**（模板生成用例、关键词归因、真实统计聚合），响应里带 `mocked=true` 标记。因此没有 Key 也能完整演示所有功能，模型服务抖动也不会影响平台主流程。
+
+**成本控制**：送入模型的失败日志会按 `AI_MAX_LOG_CHARS` 分段截断（堆栈保留最多，因为定位信息密度最高）；重试采用指数退避（上限 4 秒）；每次调用的 token 用量会记录到日志。
 
 ---
 
-## 演示数据说明
+## 项目目录结构
 
-首次启动会写入一套开箱即用的演示数据（`app/services/seed.py`）：
-
-- **演示项目** + **两套环境**（开发 / 预发，预发为占位配置）；
-- **接口用例** `data/demo_api_cases.yaml`：全部指向 **httpbin.org**，覆盖连通性、参数回显、返回值唯一性、状态码、响应头、JSON Schema、变量提取与前置用例编排等场景；
-- **UI 用例** `data/demo_ui_cases.yaml`：全部指向 **saucedemo.com**，覆盖登录、购物车、排序等典型流程；
-- **演示用例集**：把上述用例打包，并演示定时触发配置。
-
-演示用例统一把响应时间断言放宽到 10s（httpbin 是境外公有服务，跨网络耗时波动大），**只用于演示"响应时间断言"这个能力，不是真实性能基线**。接入自己的内网服务时，按 SLA 收紧到 500ms 量级即可。
+```
+auto-test-platform/
+├── app/                            # 服务层：FastAPI 应用
+│   ├── api/                        # 路由层：只做参数声明与依赖注入
+│   │   ├── auth.py                 #   注册 / 登录 / 当前用户 / 改密
+│   │   ├── projects.py             #   项目 CRUD
+│   │   ├── environments.py         #   环境配置 CRUD
+│   │   ├── testcases.py            #   用例 CRUD / 导入 / 单条与批量执行
+│   │   ├── testsuites.py           #   用例集 CRUD / 执行 / 定时任务查询
+│   │   ├── tasks.py                #   执行历史 / 详情 / 日志 / 重跑
+│   │   ├── dashboard.py            #   首页统计 / 健康检查
+│   │   └── ai.py                   #   AI 三项能力的 HTTP 入口
+│   ├── models/                     # ORM 模型（6 张表）
+│   ├── schemas/                    # Pydantic 出入参契约（前端类型与之对齐）
+│   ├── services/                   # 业务逻辑
+│   │   ├── test_runner.py          #   执行编排：任务级并发 + pytest 子进程 + 结果落库
+│   │   ├── report_service.py       #   统计聚合与报告数据
+│   │   ├── ai_service.py           #   DeepSeek 调用与规则降级
+│   │   ├── scheduler.py            #   APScheduler 定时调度
+│   │   ├── seed.py                 #   首次启动的演示数据初始化
+│   │   └── prompts/                #   三个提示词模板
+│   ├── utils/                      # JWT、bcrypt、loguru 日志封装
+│   ├── config.py                   # 全局配置唯一入口
+│   ├── database.py                 # 引擎与会话管理
+│   ├── deps.py                     # 依赖注入：会话 / 当前用户 / 分页
+│   └── main.py                     # 应用装配（中间件、异常处理、静态资源、路由）
+│
+├── engine/                         # 引擎层：纯 Python，无 Web 依赖
+│   ├── runner.py                   #   用例执行内核 + PytestRunner（子进程编排）
+│   ├── client.py                   #   httpx 接口客户端（变量渲染、敏感头脱敏）
+│   ├── ui_actions.py               #   Playwright 同步 API 封装（12 种动作）
+│   ├── assertions.py               #   5 类断言 + 13 种操作符
+│   ├── data_loader.py              #   YAML / JSON 用例加载与筛选
+│   └── allure_helper.py            #   Allure 可选依赖（不可用时全部 no-op）
+│
+├── testcases/                      # pytest 运行期入口
+│   ├── conftest.py                 #   结果收集插件（引擎层与服务层的唯一契约点）
+│   └── test_dynamic_cases.py       #   把平台下发的用例参数化成 N 条测试项
+│
+├── web/                            # 前端：Vue 3 + TypeScript
+│   ├── src/
+│   │   ├── api/                    #   按模块拆分的接口封装与 axios 实例
+│   │   ├── components/             #   用例编辑器、用例集编辑器、报告查看器、AI 助手
+│   │   ├── router/                 #   路由表与登录守卫
+│   │   ├── stores/                 #   Pinia：用户信息、当前项目
+│   │   ├── types/                  #   与后端 schemas 对齐的类型定义
+│   │   ├── utils/                  #   格式化工具
+│   │   └── views/                  #   页面：登录 / 首页 / 项目 / 用例 / 用例集 / 任务 / 环境
+│   ├── nginx.conf                  #   生产部署：SPA 回退 + 反向代理
+│   └── Dockerfile                  #   多阶段构建（Node 构建 → nginx 托管）
+│
+├── data/                           # 内置演示用例（指向 httpbin / saucedemo）
+│   ├── demo_api_cases.yaml
+│   └── demo_ui_cases.yaml
+│
+├── reports/                        # 运行期产物（不入库）
+│   ├── generated/                  #   执行载荷与结果 JSON，按 task_no 分文件
+│   ├── logs/                       #   按天切割的执行日志
+│   ├── screenshots/                #   UI 失败截图，按 task_id 分目录
+│   ├── allure-results/             #   Allure 原始结果，按 task_no 分目录
+│   └── allure-report/              #   Allure HTML 报告，按 task_no 分目录
+│
+├── .github/workflows/ci.yml        # CI：lint / 启动冒烟 / 前端构建 / 镜像构建
+├── Dockerfile                      # 后端镜像
+├── docker-compose.yml              # 一键启动编排
+├── run_engine.py                   # 引擎层独立命令行入口
+├── pyproject.toml                  # ruff / black / pytest 配置
+├── requirements.txt                # 后端与引擎依赖
+├── .env.example                    # 环境变量样板
+├── .pre-commit-config.yaml         # 提交前钩子
+├── README.md
+└── ARCHITECTURE.md
+```
 
 ---
 
-## 测试与持续集成
+## 常见问题（FAQ）
 
-### 用一个细节理解测试结构
+### 启动失败 / 依赖装不上怎么办？
 
-项目里**没有传统的 `tests/` 目录**，因为被测对象是"用户配置的用例"，而不是"平台自身的函数"。`testcases/test_dynamic_cases.py` 是一个**空壳入口**：它从 `ATP_CASE_FILE` 读用例并动态参数化，没有该环境变量时用例列表为空。
+**端口被占用**（`Address already in use` / `errno 10048`）
 
-所以有一个容易踩的坑：
-
-```bash
-pytest          # ⚠️ 会全绿，但一条真实用例都没跑（参数为空 → 全部 skip）
-```
-
-正确姿势是走引擎层 CLI，它会自动注入载荷文件：
+默认占用 `8000`（后端）、`5173`（前端开发服务器）、`8080`（Docker 前端）。三种处理方式：
 
 ```bash
-python run_engine.py --file data/demo_api_cases.yaml --tags smoke
+# 1) 换个端口启动
+uvicorn app.main:app --port 8001
+pnpm dev --port 5174
+
+# 2) Docker 方式：在 .env 里改映射端口
+BACKEND_PORT=8001
+WEB_PORT=8081
+# 改完后 docker compose up -d（无需重新 build）
+
+# 3) 查是谁占用了端口再决定是否结束它
+# Windows
+netstat -ano | findstr :8000
+# macOS / Linux
+lsof -i :8000
 ```
 
-### CI 流水线
+注意：换后端端口后，前端的代理目标也要同步改 —— 本地开发改 [web/vite.config.ts](web/vite.config.ts) 里的 `BACKEND_ORIGIN`；Docker 方式改 `docker-compose.yml` 的端口映射，`nginx.conf` 里的上游是容器名 `backend:8000`，不需要动。
 
-`.github/workflows/ci.yml` 在 push / PR 到 `main` 时触发，三个并行 job：
+**pytest 等 Python 依赖装不上**
 
-| Job | 内容 |
+- **版本不匹配**：项目要求 Python 3.11+。先确认 `python --version`，低于 3.11 请升级
+- **网络超时**：换国内镜像源
+
+  ```bash
+  pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+  ```
+
+  Docker 方式：设置环境变量 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 再 `docker compose up -d --build`
+- **需要编译工具**：少数包在无预编译 wheel 的平台（如某些 Alpine、ARM 环境）需要 gcc。优先使用「本地方式」（官方 CPython）或 Docker 方式（`python:3.12-slim` 有完整 wheel 覆盖）
+- **`playwright` 相关报错**：`pip install playwright` 只装 Python 包，浏览器内核要单独装一次 —— `playwright install chromium`。不跑 UI 用例则不需要
+
+**数据库初始化失败**
+
+- 报权限错误或无法写入：确认项目根目录下的 `data/` 目录存在且当前用户可写（SQLite 相对路径按**项目根目录**解析，而不是启动命令所在的目录）
+- Docker 方式：`./data` 会被挂载进容器，确认宿主机该目录权限正常
+- 想重置数据：停掉服务，删除 `data/auto_test_platform.db`（连带 `-wal`、`-shm` 文件），重启后会自动重新建表并写入演示数据
+- 切到 MySQL 时连不上：确认 `DB_TYPE=mysql` 与 `MYSQL_*` 五项都已填写，且目标库已提前创建（平台只建表，不建库）
+
+### 用例执行失败怎么排查？
+
+**先看任务状态，它区分的含义不同：**
+
+| 状态 | 含义 |
 | --- | --- |
-| 后端 · 代码风格 | `ruff check .` + `black --check .`（版本与 `.pre-commit-config.yaml` 一致） |
-| 后端 · 启动冒烟 | 装依赖 → `from app.main import app` → `run_engine.py --help` → 用 `TestClient` 走完整 lifespan，探活 `/api/health`、验证未登录访问业务接口返回 401、检查 OpenAPI 已注册接口数 |
-| 前端 · 类型检查与构建 | `pnpm install --frozen-lockfile` → `pnpm build`（`vue-tsc --noEmit` + `vite build`） |
+| `failed` | 用例跑完了，但断言没通过（**正常的测试结果**） |
+| `error` | 执行过程本身出问题：超时被强杀、用例无法运行、结果文件缺失 |
+| `success` | 全部用例通过 |
 
-**CI 刻意不跑 `testcases/` 下的演示用例**，原因写在 workflow 注释里：演示接口用例指向 httpbin.org、UI 用例指向 saucedemo.com，都是境外公有服务，网络抖动会导致与代码无关的红灯；UI 用例还要 `playwright install chromium`，属重量级依赖。**流水线只做"零外部依赖"的验证，保证任何一次提交都能稳定复现。** 演示用例的回归交给引擎层手工或定时执行。
+**排查顺序**：
 
-### 本地提交前检查
+1. **打开任务详情**，看每条用例的「请求 / 响应 / 断言」明细——这比看日志快得多。平台会记录实际发出的 URL、状态码、响应体，以及每条断言的期望值与实际值。
+2. **看断言为什么失败**。最常见的是期望值类型不匹配（Query 参数回显回来是字符串 `"1"` 而不是数字 `1`）。平台对这类情况做了宽松比较，但如果仍然失败，用 `schema` 断言做结构校验、或在期望值上对齐类型。
+3. **看执行日志**：任务详情里的「执行日志」，或 `GET /api/tasks/{id}/log`。日志里包含 pytest 的原始输出。
+4. **本地复现**：把出问题的用例导出为 YAML，用引擎层直接跑，避开 Web 层干扰：
 
-```bash
-pre-commit install       # 装一次即可
-pre-commit run --all-files
+   ```bash
+   python run_engine.py --file your_cases.yaml --tags smoke
+   ```
+5. **让 AI 给个初判**：任务详情里对失败用例点「AI 分析」，它会结合请求/响应/断言/堆栈输出「接口缺陷 / 脚本缺陷 / 环境问题 / 用例设计问题」的分类结论。注意这是辅助判断，仍需人工确认。
+6. **`error` 状态的额外检查点**：确认目标环境可达（比如演示用例依赖 httpbin.org 与 saucedemo.com，境外网络不通会直接失败）；跑 UI 用例时确认已 `playwright install chromium`；确认单个任务没超过 `PYTEST_TIMEOUT_SECONDS`（默认 300 秒）。
+
+### Allure 报告打不开怎么办？
+
+Allure HTML 报告由 **Allure CLI** 生成，而它依赖 **Java**，这是最容易踩的坑。平台生成报告失败时**只记日志、不会让任务变红**，所以任务成功 ≠ 报告已生成。
+
+**先判断报告到底生成了没有**：任务详情里有「查看 Allure 报告」入口说明已生成，地址形如：
+
+```
+http://localhost:8000/static/allure/<task_no>/index.html
 ```
 
-钩子包含：尾随空格、文件末尾换行、YAML/JSON 语法、大文件拦截（>1MB）、合并冲突标记、私钥检测、ruff（带 `--fix`）、black。ruff 只做 lint，格式化统一交给 black，避免两个格式化器互相打架。
+如果入口没有出现，或访问返回 404，说明生成环节失败了。按下面排查：
+
+**1. 检查 Allure CLI 是否可用**
+
+```bash
+allure --version        # 应输出版本号，如 2.46.1
+java -version           # Allure 依赖 JRE，未安装会报错
+```
+
+本地方式没装的话：
+
+```bash
+# macOS
+brew install allure
+# 或从官方 Release 手动下载解压后加入 PATH
+# https://github.com/allure-framework/allure2/releases
+```
+
+**2. Docker 方式**：后端镜像默认已内置（`INSTALL_ALLURE=true`）。如果之前用 `--build-arg INSTALL_ALLURE=false` 构建过，重新构建即可：
+
+```bash
+docker compose build --no-cache backend && docker compose up -d
+```
+
+**3. 不想装 Allure**：把 `ALLURE_AUTO_GENERATE` 设为 `false`，平台就不再去调用 CLI，也不会产生失败日志。
+
+**4. 想直接看原始结果**：Allure 原始数据始终保存在 `reports/allure-results/<task_no>/`，可以在本机用一条命令起个临时服务查看：
+
+```bash
+allure serve reports/allure-results/<task_no>
+```
+
+**5. 报告为空 / 用例全部缺失**：确认执行时确实产生了结果文件——检查 `reports/allure-results/<task_no>/` 下是否有 `*-result.json`。若为空而任务显示成功，通常是用例集本身为空（pytest 未收集到用例，退出码 5 也被判定为成功）。
+
+> 顺带一提：每次执行都是**独立的报告目录**，按 `task_no` 区分，所以历史报告不会被覆盖。
+
+### DeepSeek Key 配置后不生效
+
+按下面五点依次排查：
+
+1. **是否重启了服务（最常见原因）**。配置通过 `lru_cache` 单例在进程启动时读取一次，改完 `.env` 必须重启：本地方式重启 `uvicorn`，Docker 方式执行 `docker compose restart backend`（改了 `environment` 或 `.env` 中的值时需要 `docker compose up -d` 让容器重建）。
+2. **确认 Key 真的被读到了**：
+
+   ```bash
+   curl -s http://localhost:8000/api/ai/status -H "Authorization: Bearer $TOKEN"
+   ```
+
+   返回里的 `ai_available` 为 `false` 就说明没读到。该字段为 `true` 的**三个必要条件**是：`AI_ENABLED=true`、`AI_MOCK=false`、`DEEPSEEK_API_KEY` 非空白。
+3. **环境变量名与位置是否写对**。本地方式写在项目根目录的 `.env`（注意不是 `web/.env`，也不是 `.env.example`）；Docker 方式写在**与 `docker-compose.yml` 同级**的 `.env`，变量名都是 `DEEPSEEK_API_KEY`。
+4. **模型名是否可用**。默认 `DEEPSEEK_MODEL=deepseek-v4`，若账号没有该模型权限会调用失败。改成 `DEEPSEEK_MODEL=deepseek-chat` 后重启，接口完全兼容。
+5. **看响应里的降级标记**。即使 Key 配好了，只要调用过程抛异常，平台也会**自动降级**为规则兜底，并且响应里会带 `mocked=true` 与 `raw` 字段——`raw` 里记录了具体的失败原因（如认证失败、超时、余额不足）。先看 `raw` 再定位。
+
+> 没配 Key 不影响使用：三项 AI 功能都会返回基于真实数据的规则结果，只是响应带 `mocked=true` 标记。
+
+### 如何新增一个自定义断言类型
+
+以新增一个「校验响应体文本包含某关键字」的断言类型 `body_contains` 为例，需要改**两处**（断言实现与 schema 字面量必须保持同步）：
+
+**第 1 步：在引擎层实现断言**
+
+打开 [engine/assertions.py](engine/assertions.py)，参照现有的断言类型做三件事：
+
+1. 在文件顶部的 `ASSERT_TYPE_*` 常量区（约 21-25 行）新增常量：
+
+   ```python
+   ASSERT_TYPE_BODY_CONTAINS = "body_contains"
+   ```
+
+2. 新增一个 `_check_*` 方法，与 `_check_status`、`_check_json_field` 等保持同样的签名与返回类型：
+
+   ```python
+   @staticmethod
+   def _check_body_contains(response: ApiResponse, rule: AssertionRule) -> AssertionResult:
+       """校验响应文本是否包含期望关键字。"""
+       expected = str(rule.expected or "")
+       actual = response.text or ""
+       passed = expected in actual
+       return AssertionResult(
+           name=rule.label,
+           passed=passed,
+           expected=expected,
+           actual="<命中>" if passed else actual[:200],
+           message=rule.message,
+       )
+   ```
+
+3. 在 `AssertionEngine._check_one()` 的类型分派里加一个分支（与其他 `_check_*` 并列）：
+
+   ```python
+   if rule.type == ASSERT_TYPE_BODY_CONTAINS:
+       return AssertionEngine._check_body_contains(response, rule)
+   ```
+
+**第 2 步：在 schema 里放开字面量**
+
+打开 [app/schemas/common.py](app/schemas/common.py)，把新类型加进 `AssertType`（否则请求会被 Pydantic 拦在 422）：
+
+```python
+AssertType = Literal["status_code", "json_field", "response_time", "schema", "header", "body_contains"]
+```
+
+该文件顶部有注释说明它必须与 `engine.assertions` 中的常量保持一致，改完记得两边都同步。
+
+**第 3 步（可选）：让前端表单也能选**
+
+如果希望界面上能下拉选到它，在 [web/src/types/index.ts](web/src/types/index.ts) 的断言类型联合类型里补上同样的值。
+
+**第 4 步：验证**
+
+```bash
+# 类型检查与流程回归
+python -m pytest -q                    # 收集期应无异常
+python run_engine.py --file your_cases.yaml    # 用真实用例跑一遍
+```
+
+> 同理，`engine/ui_actions.py` 里新增 UI 动作时，也要同步 [app/schemas/common.py](app/schemas/common.py) 中的 `UIAction` 字面量。
 
 ---
 
-## 已知限制与后续演进
+## 路线图（Roadmap）
 
-诚实列出当前项目的边界，避免误用：
+按优先级排列，欢迎通过 Issue 讨论具体设计。
 
-| 项 | 现状 | 说明 |
-| --- | --- | --- |
-| 路由级权限隔离 | **未实现** | `UserRole`（admin/member）与 `AdminUser` 依赖已就绪，但没有任何路由使用它，业务接口目前只要求登录 |
-| 用例级并行 | **未实现** | `PYTEST_MAX_WORKERS` 配置项已定义但未接线。原因是进程内遥测（`CaseTelemetry`）依赖同进程收集明细，上 pytest-xdist 后 worker 是独立进程，遥测要跨进程回传会显著增加复杂度。这是**明确的扩展点，不是遗漏** |
-| `TriggerType.CI` | **已定义未使用** | 枚举里留了 `ci` 值，但没有赋值入口（`engine` 侧无回写通道），目前只有 `manual` 与 `schedule` 两条路径 |
-| 前端 `TriggerType` 字面量 | **与后端不一致** | 前端定义为 `manual \| schedule \| suite \| retry`，后端实际是 `manual \| schedule \| ci`，字段仅用于展示，暂未造成功能问题 |
-| 数据库迁移 | **用 `create_all`** | 生产环境如需版本化迁移，可接入 Alembic（`app/database.py` 已留注释） |
-| 容器化 | **缺失** | `web/nginx.conf` 反代到容器名 `backend`，暗示预期配合 docker-compose 部署，但仓库里没有 `Dockerfile` 与 `docker-compose.yml` |
-| 性能测试 | **仅预留依赖** | `locust` 已列入 `requirements.txt`，代码中无任何引用 |
-| 平台侧用例编排能力 | **受限于数据驱动** | 用例是数据，无法写任意 Python 逻辑；复杂场景需要靠 `setup_case` 前置用例 + `extract` 变量提取两个机制组合 |
+**近期（体验完善）**
 
----
+- [ ] 补齐数据库版本化迁移（接入 Alembic，替代当前的 `create_all`）
+- [ ] 打通路由级 RBAC：`UserRole` 与 `AdminUser` 依赖已就绪，只需在需要管理员权限的路由上替换依赖
+- [ ] 前端类型由 OpenAPI 自动生成，替代当前手工与后端 `schemas` 对齐的方式
+- [ ] 用例集支持「按标签动态选取用例」，避免每次新增用例都要手动勾选
 
-## 面试常见问题
+**中期（能力扩展）**
 
-以下 5 个点是这个项目里最值得展开的设计决策，每个都包含「做了什么」与「付出了什么代价」。
+- [ ] 任务内并行执行：`PYTEST_MAX_WORKERS` 配置项已预留，需要先把进程内遥测改造成可跨进程回传，再接入 pytest-xdist
+- [ ] 执行结果回写通道：`TriggerType.CI` 已定义枚举值但尚无写入入口，补上后即可把 CI 里用 `run_engine.py` 跑出的结果同步回平台
+- [ ] 性能测试模块：依赖中已预留 locust，计划新增 `engine/performance/` 与对应的 `case_type`
+- [ ] 支持导入 Postman Collection / OpenAPI 文档批量生成用例
+- [ ] 用例版本历史与变更对比
 
-### 1. 为什么要把引擎层做成可以脱离 Web 独立运行？
+**长期（工程化）**
 
-**亮点**：`engine/` 是全项目最干净的模块——它不 import `app/` 的任何东西，不知道数据库、不知道权限、不知道 HTTP。这条边界让同一套执行内核有两条使用路径：平台通过 `PytestRunner` 调度它，CLI 通过 `run_engine.py` 直接调用它。带来的实际收益是：本地调试用例不需要起数据库，接进任意 CI 只需要一个 YAML 文件，引擎层的改动不会波及 Web 层。
+- [ ] 引入消息队列替换当前基于线程池的执行编排，支持多实例横向扩容
+- [ ] 告警集成：任务失败后推送企业微信 / 飞书 / 邮件
+- [ ] 测试数据管理：数据集、参数化多组数据、环境级数据隔离
+- [ ] 发布官方镜像到 GHCR，简化部署流程
 
-**权衡**：为了维持这条边界，`app` 和 `engine` 之间**不能直接传对象**，只能约定一个跨进程契约：结果通过「载荷 JSON 文件进去、结果 JSON 文件出来」+ `ATP_*` 环境变量传递，外加 `testcases/conftest.py` 里一个纯 pytest 钩子做收集。这比直接函数调用麻烦得多，也多了一层序列化开销。另一个代价是同一个概念要在两侧各有一份表示（`TestCase.to_engine_payload()` 与 `engine` 的 `normalize_case()` 都要理解用例结构），存在轻微重复。我判断这是值得的：耦合是长期成本，序列化是一次性成本。
+**已知不足**（不打算在短期内解决，仅作说明）
 
-### 2. 执行用例为什么要开独立子进程，而不是 `pytest.main()`？
-
-**亮点**：`engine/runner.py` 用 `subprocess.run([sys.executable, "-m", "pytest", ...])` 起独立进程，而不是在服务进程里调 `pytest.main()`。三个理由：**崩溃隔离**（用例里出现段错误、`os._exit`、C 扩展崩溃时，只死子进程，Web 服务不受影响）；**可被强杀**（`subprocess` 支持超时后终止，线程不行——Python 没法从外部安全地打断一个线程）；**避开 GIL 争抢**（被测逻辑和 Web 服务不互相抢 GIL）。
-
-**权衡**：每次任务都有一次 Python 解释器启动 + pytest 插件加载的固定开销，长尾任务是几十毫秒到几百毫秒量级；而且父子进程之间只能靠文件和环境变量通信，不能直接返回对象。相比之下收益是稳定性和可控性，对一个"跑了就不该拖垮服务"的测试平台来说，这个取舍是明确划算的。
-
-### 3. 并发模型为什么选「任务级并发、任务内串行」？
-
-**亮点**：`test_runner.py` 用模块级 `ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TASKS)` + `BoundedSemaphore` 双保险，默认上限 4。用信号量而不是只靠线程池，是因为同一个任务可能被重复提交（用户连点执行按钮），所以还额外维护了一个 `_RUNNING_TASKS` 集合做去重。受控的并发上限让平台不会因为一次批量执行把自己的机器打满。
-
-**权衡**：任务内串行意味着一个 200 条用例的用例集耗时会线性叠加。**为什么不直接上 `-n` / pytest-xdist？** 因为 `CaseTelemetry` 是在被测进程内记录请求、响应、断言明细的，xdist 的每个 worker 是独立进程，这些明细要回传主进程需要额外的序列化与合并逻辑，会让"引擎层与结果收集"这条本来很干净的链路复杂一大截。所以我把并行度作为**显式配置项 `PYTEST_MAX_WORKERS` 预留**，而不是偷偷实现一个半成品——留一个明确的扩展点，比留一个隐藏的坑更好。
-
-### 4. AI 能力为什么设计成「可降级」而不是「可选」？
-
-**亮点**：三种情况都会触发降级——`AI_ENABLED=false`、`AI_MOCK=true`、或 `DEEPSEEK_API_KEY` 为空；而且**调用过程中抛任何异常也会二次降级**。关键是降级后不是返回一句"AI 不可用"，而是返回**基于真实数据的规则结果**：生成用例走模板、失败归因走关键词匹配、报告问答走真实统计聚合，只是响应里带上 `mocked=true` 标记。这让"没配 API Key 的人 clone 下来也能完整演示所有功能"成为可能，也让模型服务的抖动不会传导成平台功能不可用。
-
-**权衡**：要维护两套实现，`ai_service.py` 里 LLM 路径 + 规则兜底路径让文件规模翻了一倍，且两条路径的输出结构必须严格一致才能被同一套 schema 接住。另外成本控制也要自己兜：`AI_MAX_LOG_CHARS` 对断言/请求、响应、堆栈**分段按不同比例截断**（堆栈给得最多，因为定位信息密度最高），配合 `max_tokens` 限制与 token 用量记录。换来的是"演示零门槛 + 生产抗抖动"，我认为这个代价是必要的。
-
-### 5. 为什么坚持「用例是数据，不是代码」？
-
-**亮点**：`testcases/test_dynamic_cases.py` 整个文件只有一个 `pytest.mark.parametrize("case", _CASES)`——平台把用例序列化成 JSON 载荷，pytest 把它参数化成 N 条独立测试项。这一步换来了三件事：新增用例**零代码改动**（不懂 Python 的业务同学也能加用例）；每条用例天然拥有**独立的结果、耗时、重跑次数**，互不污染；"按标签筛选""单条重跑""失败重跑"这些需求全部退化成**参数问题**，不需要任何额外的调度代码。顺带一个好处：默认 `pytest` 因为没有载荷文件会一条都不跑，这是**刻意的**——它保证了没人能误以为"平台自身的 pytest 通过"就等于"用户的用例通过"。
-
-**权衡**：表达能力受限。用例是数据就意味着不能写任意 Python 逻辑，于是才必须补上 `setup_case`（前置用例编排）和 `extract`（响应变量提取）两个机制来覆盖"先登录再查订单"这类串联场景；而一旦有重复逻辑，只能在数据层面重复或靠前置用例复用，无法抽象成函数。`setup_ref` 在 CLI 模式下会被展开成内联用例、在平台模式下由数据库引用解析，也是为了同一份 YAML 在两种模式下行为一致而付出的额外复杂度。
-
----
-
-## 相关文档
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) —— 分层设计与依赖规则、数据模型、执行时序、契约点、并发模型、扩展点
-- [.env.example](.env.example) —— 全部环境变量及其注释
-- [.github/workflows/ci.yml](.github/workflows/ci.yml) —— CI 流水线及其设计取舍
-- 运行时接口文档：服务启动后访问 `/docs`（Swagger）或 `/redoc`
+- 演示用例指向境外公有服务（httpbin.org / saucedemo.com），因此无法纳入 CI 做稳定回归
+- 报告统计中的失败用例分布只扫描最近 100 个任务（为跨 SQLite/MySQL 一致性放弃了 JSON 聚合 SQL）
 
 ---
 
 ## License
 
-本项目为个人作品集项目，未附带开源许可证。
+本项目基于 [MIT License](LICENSE) 开源。
