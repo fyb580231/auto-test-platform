@@ -123,31 +123,35 @@ flowchart TB
 
 ## 界面预览
 
-> 以下截图基于演示数据：3 个业务线项目、18 条接口用例、24 次执行记录。
+> 以下截图取自实际运行的演示数据：4 个项目、120 条接口用例、600+ 次用例执行，整体通过率 93%。
 
-**运行概览首页**：通过率趋势、失败用例分布、各项目质量一目了然
+**登录页**：默认账号 admin / admin123
 
-![运行概览首页](docs/screenshots/02-dashboard.png)
+![登录页](docs/screenshots/01-login.png)
+
+**运行概览**：120+ 用例、600+ 次执行、93% 通过率趋势一目了然
+
+![运行概览](docs/screenshots/02-dashboard.png)
+
+**AI 智能助手**：自然语言查询测试报告，已接入 DeepSeek 大模型
+
+![AI 智能助手](docs/screenshots/03-ai-assistant.png)
 
 **多项目管理**：按业务线隔离用例与环境
 
-![多项目管理](docs/screenshots/03-projects.png)
+![多项目管理](docs/screenshots/04-projects.png)
 
-**用例管理**：接口用例与 UI 用例统一管理，支持标签分类
+**用例管理**：35+ 条用例/项目，标签分类清晰
 
-![用例管理](docs/screenshots/04-testcases.png)
+![用例管理](docs/screenshots/05-testcases.png)
 
-**用例编辑器**：可视化编排 UI 步骤与接口断言规则
+**用例集与定时任务**：可视化编排，cron 自动回归
 
-![用例编辑器](docs/screenshots/05-case-editor.png)
+![用例集与定时任务](docs/screenshots/06-testsuite-editor.png)
 
-**用例集与定时任务**：cron 调度自动回归
+**多环境配置**：dev/staging 环境变量统一管理
 
-![用例集与定时任务](docs/screenshots/06-testsuites.png)
-
-**AI 智能助手**：自然语言查询测试报告，失败根因分析
-
-![AI 智能助手](docs/screenshots/07-ai-assistant.png)
+![多环境配置](docs/screenshots/07-environment-config.png)
 
 ---
 
