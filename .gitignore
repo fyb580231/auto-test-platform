@@ -22,6 +22,8 @@ htmlcov/
 
 # ---------- 数据库 ----------
 *.db
+# SQLite 的 WAL / SHM / journal 等附属文件（*.db 匹配不到它们，需单独声明）
+*.db-*
 *.sqlite
 *.sqlite3
 
