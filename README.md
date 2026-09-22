@@ -121,6 +121,36 @@ flowchart TB
 
 ---
 
+## 界面预览
+
+> 以下截图基于演示数据：3 个业务线项目、18 条接口用例、24 次执行记录。
+
+**运行概览首页**：通过率趋势、失败用例分布、各项目质量一目了然
+
+![运行概览首页](docs/screenshots/02-dashboard.png)
+
+**多项目管理**：按业务线隔离用例与环境
+
+![多项目管理](docs/screenshots/03-projects.png)
+
+**用例管理**：接口用例与 UI 用例统一管理，支持标签分类
+
+![用例管理](docs/screenshots/04-testcases.png)
+
+**用例编辑器**：可视化编排 UI 步骤与接口断言规则
+
+![用例编辑器](docs/screenshots/05-case-editor.png)
+
+**用例集与定时任务**：cron 调度自动回归
+
+![用例集与定时任务](docs/screenshots/06-testsuites.png)
+
+**AI 智能助手**：自然语言查询测试报告，失败根因分析
+
+![AI 智能助手](docs/screenshots/07-ai-assistant.png)
+
+---
+
 ## 技术栈
 
 **后端**
