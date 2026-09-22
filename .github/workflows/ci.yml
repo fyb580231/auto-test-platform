@@ -1,0 +1,140 @@
+# ==============================================================================
+# auto-test-platform 持续集成流水线
+#
+# 设计原则：CI 只做「零外部依赖」的验证，保证任何一次提交都能稳定复现。
+#
+# 因此这里**刻意不跑 testcases/ 下的演示用例**，原因有两点：
+#   1. 演示接口用例指向 httpbin.org、UI 用例指向 saucedemo.com，都是境外公有服务，
+#      网络抖动会让流水线出现与代码无关的红灯；
+#   2. UI 用例需要 playwright 浏览器内核，属于重量级依赖，不适合每次提交都装。
+# 演示用例的回归交给引擎层手工/定时执行：
+#   python run_engine.py --file data/demo_api_cases.yaml --tags smoke
+# ==============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支上若有新提交，自动取消尚未跑完的旧流水线，避免排队浪费额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 后端代码风格：与 .pre-commit-config.yaml 保持同一套规则和同一批版本号
+  # ---------------------------------------------------------------------------
+  backend-lint:
+    name: 后端 · 代码风格 (ruff + black)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装代码检查工具
+        run: pip install ruff==0.8.4 black==24.10.0
+
+      - name: ruff 静态检查（lint 规则见 pyproject.toml）
+        run: ruff check .
+
+      - name: black 格式校验（只校验不修改）
+        run: black --check .
+
+  # ---------------------------------------------------------------------------
+  # 后端启动冒烟：验证应用能真正装配起来并对外提供服务，而不只是能 import
+  # ---------------------------------------------------------------------------
+  backend-smoke:
+    name: 后端 · 启动冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装后端依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 应用导入检查
+        run: python -c "from app.main import app; print('import ok:', app.title, app.version)"
+
+      - name: 引擎层 CLI 可用性检查
+        run: python run_engine.py --help
+
+      - name: 启动探活（走完整 lifespan：建表 + 初始化演示数据 + 启停调度器）
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+
+          from app.main import app
+
+          # with 语句会触发 FastAPI lifespan：init_db / bootstrap / scheduler.start
+          with TestClient(app) as client:
+              health = client.get("/api/health")
+              assert health.status_code == 200, health.text
+              payload = health.json()
+              assert payload["data"]["app"] == "auto-test-platform", payload
+              print("health  ->", payload)
+
+              root = client.get("/")
+              assert root.status_code == 200, root.text
+              print("root    ->", root.json())
+
+              # 未登录访问受保护接口必须被拦下，避免鉴权依赖被误删
+              unauthorized = client.get("/api/dashboard/stats")
+              assert unauthorized.status_code == 401, unauthorized.text
+              print("auth    -> 未登录访问业务接口返回 401，鉴权链路正常")
+
+              schema = client.get("/openapi.json")
+              assert schema.status_code == 200, schema.text
+              print("openapi -> 已注册接口数:", len(schema.json()["paths"]))
+
+          print("启动冒烟通过")
+          PY
+
+  # ---------------------------------------------------------------------------
+  # 前端：类型检查与产物构建（package.json 的 build 脚本 = vue-tsc --noEmit && vite build）
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: 前端 · 类型检查与构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # 必须先装 pnpm，下面的 setup-node 才能用 cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 安装前端依赖（严格按 lockfile）
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查 + 构建
+        run: pnpm build
