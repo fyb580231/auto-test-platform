@@ -1,0 +1,96 @@
+# ==============================================================================
+# 一键启动：docker compose up -d --build
+#
+# 启动后访问 http://localhost:8080 即可（前端 nginx 已把 /api 与 /static
+# 反代到后端容器，浏览器侧同源，无需处理跨域）。
+#
+# 所有可调参数都支持两种覆盖方式，优先级从高到低：
+#   1. 同目录下的 .env 文件（`cp .env.example .env` 后修改，已被 .gitignore 忽略）
+#   2. 下面 environment 里的默认值
+# ==============================================================================
+
+name: auto-test-platform
+
+services:
+  # ----------------------------------------------------------------------------
+  # 后端：FastAPI 服务 + pytest 执行引擎
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 装入 Allure CLI 与 JRE，让任务结束后能自动生成 HTML 报告
+        INSTALL_ALLURE: "true"
+        # 需要执行 UI 用例时改为 "true"（镜像会增大约 300MB）
+        INSTALL_PLAYWRIGHT_BROWSERS: "${INSTALL_PLAYWRIGHT_BROWSERS:-false}"
+        # 国内网络建议设为 https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-}"
+        # 服务名必须叫 backend：web/nginx.conf 里的上游写的是 http://backend:8000
+    image: auto-test-platform-backend:latest
+    container_name: atp-backend
+    restart: unless-stopped
+    # 服务会拉起 pytest 子进程，用 init 进程回收孤儿进程、正确传递信号
+    init: true
+    environment:
+      APP_NAME: auto-test-platform
+      APP_VERSION: 1.0.0
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: "${DEBUG:-false}"
+      # 前端与后端同源（都走 nginx），这里主要给直连 8000 端口调试的场景用
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}"
+
+      DB_TYPE: "${DB_TYPE:-sqlite}"
+      SQLITE_PATH: ./data/auto_test_platform.db
+
+      # 生产环境务必替换为随机长字符串
+      JWT_SECRET: "${JWT_SECRET:-dev-only-secret-please-change}"
+      DEFAULT_ADMIN_USERNAME: "${DEFAULT_ADMIN_USERNAME:-admin}"
+      DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-admin123}"
+
+      # 留空则 AI 模块自动降级为基于规则兜底的 Mock 模式，其余功能不受影响
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-v4}"
+      AI_ENABLED: "${AI_ENABLED:-true}"
+
+      ALLURE_AUTO_GENERATE: "${ALLURE_AUTO_GENERATE:-true}"
+      MAX_CONCURRENT_TASKS: "${MAX_CONCURRENT_TASKS:-4}"
+      DEFAULT_RETRY_TIMES: "${DEFAULT_RETRY_TIMES:-2}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    volumes:
+      # SQLite 数据库与内置演示用例：持久化，容器重建不丢数据
+      - ./data:/app/data
+      # 日志、失败截图、Allure 报告：持久化并可直接在宿主机查看
+      - ./reports:/app/reports
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).status == 200 else 1)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # 首次启动要建表并写入演示数据，给足冷启动时间
+      start_period: 40s
+
+  # ----------------------------------------------------------------------------
+  # 前端：nginx 托管构建产物，并把 /api、/static 反代到后端
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: auto-test-platform-web:latest
+    container_name: atp-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        # 等后端健康检查通过再起 nginx，避免首屏请求打到还没就绪的服务
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"

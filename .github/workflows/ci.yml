@@ -138,3 +138,21 @@ jobs:
 
       - name: 类型检查 + 构建
         run: pnpm build
+
+  # ---------------------------------------------------------------------------
+  # 容器：验证镜像能真正构建出来
+  #
+  # 只构建、不打标签也不推送 —— 目的是让 Dockerfile 与 docker-compose.yml 的
+  # 改动不会悄悄坏掉（基础镜像标签失效、依赖装不上、前端构建失败都会在这里暴露）。
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: 容器 · 镜像构建验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 compose 配置
+        run: docker compose config --quiet
+
+      - name: 构建后端与前端镜像
+        run: docker compose build

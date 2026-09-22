@@ -1,0 +1,51 @@
+# ==============================================================================
+# 构建上下文排除清单（后端镜像）
+#
+# 只保留运行后端服务与执行用例真正需要的文件，
+# 把版本库元数据、前端工程、本地虚拟环境和运行期产物挡在上下文之外。
+# ==============================================================================
+
+# ---------- 版本控制 / IDE / 容器 ----------
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# ---------- 文档（后端运行不需要） ----------
+README.md
+ARCHITECTURE.md
+LICENSE
+docs
+
+# ---------- Python 虚拟环境与各类缓存 ----------
+.venv
+venv
+env
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# ---------- 前端工程（由 web/Dockerfile 单独构建） ----------
+web
+
+# ---------- 运行期产物（改由 volume 挂载） ----------
+reports
+data/*.db
+data/*.db-*
+testcases/generated
+*.log
+
+# ---------- 本地配置与密钥 ----------
+.env
+.env.local
+.env.*.local
