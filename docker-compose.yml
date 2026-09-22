@@ -52,7 +52,7 @@ services:
       # 留空则 AI 模块自动降级为基于规则兜底的 Mock 模式，其余功能不受影响
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
-      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-v4}"
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-chat}"
       AI_ENABLED: "${AI_ENABLED:-true}"
 
       ALLURE_AUTO_GENERATE: "${ALLURE_AUTO_GENERATE:-true}"

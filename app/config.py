@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # ---------- AI ----------
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-v4"
+    deepseek_model: str = "deepseek-chat"
     ai_enabled: bool = True
     ai_mock: bool = False
     ai_timeout_seconds: int = 30

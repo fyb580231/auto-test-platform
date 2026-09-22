@@ -180,7 +180,7 @@ flowchart TB
 
 | 组件 | 选型 |
 | --- | --- |
-| 模型服务 | DeepSeek（默认 `deepseek-v4`） |
+| 模型服务 | DeepSeek（`deepseek-chat`） |
 | 调用方式 | OpenAI 官方 SDK 1.59 指向 DeepSeek 的 OpenAI 兼容端点 |
 
 **前端**
@@ -582,7 +582,7 @@ UI 用例把 `method` / `url` 换成 `base_url` + `steps`：
 | | `JWT_EXPIRE_MINUTES` | `1440` | 令牌有效期（分钟） |
 | 管理员 | `DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动自动创建 |
 | AI | `DEEPSEEK_API_KEY` | 空 | 留空则自动降级为 Mock |
-| | `DEEPSEEK_MODEL` | `deepseek-v4` | 无 v4 权限时改成 `deepseek-chat` |
+| | `DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek 官方模型名，另有 `deepseek-reasoner` |
 | | `AI_ENABLED` / `AI_MOCK` | `true` / `false` | 总开关与强制 Mock 开关 |
 | | `AI_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` / `AI_MAX_TOKENS` | `30` / `2` / `4096` | 超时、重试次数与单次生成上限 |
 | | `AI_MAX_LOG_CHARS` | `6000` | 失败分析送入模型的最大日志字符数（成本控制） |
@@ -635,7 +635,7 @@ AI 能力由 DeepSeek 提供，三项功能：
    ```dotenv
    # .env
    DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
-   DEEPSEEK_MODEL=deepseek-v4        # 若账号暂无 v4 权限，改成 deepseek-chat
+   DEEPSEEK_MODEL=deepseek-chat
    ```
 
    Docker 方式也可以直接编辑同目录的 `.env`，`docker-compose.yml` 会自动读取。
@@ -860,7 +860,7 @@ allure serve reports/allure-results/<task_no>
 
    返回里的 `ai_available` 为 `false` 就说明没读到。该字段为 `true` 的**三个必要条件**是：`AI_ENABLED=true`、`AI_MOCK=false`、`DEEPSEEK_API_KEY` 非空白。
 3. **环境变量名与位置是否写对**。本地方式写在项目根目录的 `.env`（注意不是 `web/.env`，也不是 `.env.example`）；Docker 方式写在**与 `docker-compose.yml` 同级**的 `.env`，变量名都是 `DEEPSEEK_API_KEY`。
-4. **模型名是否可用**。默认 `DEEPSEEK_MODEL=deepseek-v4`，若账号没有该模型权限会调用失败。改成 `DEEPSEEK_MODEL=deepseek-chat` 后重启，接口完全兼容。
+4. **模型名是否有效**。默认 `DEEPSEEK_MODEL=deepseek-chat`，这是 DeepSeek 官方兼容 OpenAI 接口的模型名。若写成不存在的模型名，DeepSeek 会返回 400，平台随即降级为 Mock 并把原因写进响应体的 `raw` 字段。
 5. **看响应里的降级标记**。即使 Key 配好了，只要调用过程抛异常，平台也会**自动降级**为规则兜底，并且响应里会带 `mocked=true` 与 `raw` 字段——`raw` 里记录了具体的失败原因（如认证失败、超时、余额不足）。先看 `raw` 再定位。
 
 > 没配 Key 不影响使用：三项 AI 功能都会返回基于真实数据的规则结果，只是响应带 `mocked=true` 标记。
